@@ -1,0 +1,6 @@
+{
+  "name": "the-25th-hour",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}
