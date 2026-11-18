@@ -80,3 +80,13 @@ For draft proposals, the UI evaluates each one **without** and **with** its draf
 - **M4:** estimate learning only suggests, never silently changes a student's estimate.
 
 If an exported name or return shape must change, update **this document first**, notify the other person and land a small contract PR before dependent code.
+
+## Commitment and approval helpers
+
+- `createProposal(fields, days, {existingTasks, notBeforeDate} = {})` from `commitments.mjs` validates form data and returns a draft Task. Form keys are `title, likely, min, max, deadline, tag, latestDate, earliestDate, type`. Omit optional fields or pass empty strings for dates and estimates. Supply a campus date as `notBeforeDate` to reject past deadlines.
+- `evaluateCommitments(tasks, proposals, days, options)` returns `{before, separate, together}`. Each outcome contains `evaluation` and typical `cost`, the after outcomes also contain `proposalIds` and verified `repairs`.
+- `deadlineCost(schedule, days)` returns the binding deadline, capacity, demand, margin, shortfall, and contributing tasks in hours, or null when there are no deadlines. `verdictText(evaluation, days)` supplies the verdict copy. Release dates can make the schedule miss a deadline even with positive cumulative margins.
+- `applyAction` accepts an optional third argument `{approved: true}` for an explicitly approved action. It rejects approval-dependent actions by default, including actions with a falsified approval flag. For live plans use `applyRepair(tasks, days, repairId, {...options, approvedActionIds})`. It re-verifies against current inputs, then applies only when every dependent action is approved. Use `Repair.updated` and `Repair.test` exclusively for previews.
+- `draftApprovalRequest` accepts `{includeWorkload: true}` only after the student opts in. `emptyRepairMessage(verdict)` supplies the three empty states.
+- `Evaluation.minMargin` is null for an empty deadline set. Loaded dates must be valid, unique and chronological. A work or busy window may end at `24:00`.
+- `parsePastedTasks(text, days, {existingIds} = {})` can deconflict IDs against the current plan. Calendar windows round outward to half-hour boundaries to avoid making an overlapping slot available.
