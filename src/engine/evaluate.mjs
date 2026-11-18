@@ -40,6 +40,15 @@ export function weeklyCheck(tasks, days, options = {}) {
   return {feasible: requiredMinutes <= capacityMinutes, requiredMinutes, capacityMinutes};
 }
 
+export function weeklyComparison(schedule, dayIndices) {
+  const selected = new Set(dayIndices);
+  const requiredMinutes = schedule.taskResults.filter(task => selected.has(task.dueDay))
+    .reduce((sum, task) => sum + task.required, 0);
+  const capacityMinutes = schedule.byDay.filter(day => selected.has(day.index))
+    .reduce((sum, day) => sum + day.capacity, 0);
+  return {feasible:requiredMinutes <= capacityMinutes, requiredMinutes, capacityMinutes};
+}
+
 export function bindingMargin(schedule) {
   return schedule.deadlineMargins.reduce((best, item) =>
     !best || item.margin < best.margin ? item : best, null);

@@ -83,7 +83,10 @@ export function runSchedule(tasks, ordered, days, slots, dueKey, duration, detai
     if (ordered[nextDue]?.[dueKey] !== dayIndex) continue;
     while (ordered[nextDue]?.[dueKey] === dayIndex) {
       demand += ordered[nextDue][duration] * 60;
-      if (remaining[nextDue]) feasible = false;
+      if (remaining[nextDue]) {
+        if (!detailed) return {feasible:false, minMargin:null};
+        feasible = false;
+      }
       nextDue++;
     }
     const margin = capacity - demand;

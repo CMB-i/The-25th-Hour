@@ -14,7 +14,7 @@ const sweep = hours.map(likely => {
 });
 const random = seed => max => {
   seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-  return seed % max;
+  return Math.floor(seed / 2 ** 32 * max);
 };
 const task = (id, likely, targetDay, overrides = {}) => ({
   id, title:id, min:likely, likely, max:likely, targetDay, hardDay:targetDay, earliestDay:0, priority:1, ...overrides

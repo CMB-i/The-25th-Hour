@@ -3,37 +3,64 @@ import { lexical, weekdayName } from './dates.mjs';
 import { validateTasks } from './scheduler.mjs';
 
 const rank = {infeasible: 0, 'at-risk': 1, feasible: 2};
-const engineDayName = (days, index) => weekdayName(days[index].date);
+function destinationLabel(days, index) {
+  const day = days[index];
+  return index < 7 ? weekdayName(day.date) : `${weekdayName(day.date)} (${day.date})`;
+}
 
-export function actionIdeas(tasks,days){
+export function actionIdeas(tasks, days) {
   validateTasks(tasks, days);
-  const ideas=[];
-  for(const t of tasks){
-    if(t.removed)continue;
-    if(t.flexible&&t.targetDay<t.hardDay) {
-      for(let day=t.targetDay+1;day<=t.hardDay;day++)ideas.push({id:`move:${t.id}:${day}`,taskId:t.id,type:'move',toDay:day,needsApproval:false,label:`Move ${t.title} target to ${engineDayName(days,day)}`,description:'Adjust an internal target without violating the final hard deadline.',impact:t.likely*60,disruption:1});
+  const ideas = [];
+  for (const task of tasks) {
+    if (task.removed) continue;
+    const {id, title, targetDay, hardDay} = task;
+    const impact = task.likely * 60;
+    if (task.flexible) {
+      for (let toDay = targetDay + 1; toDay <= hardDay; toDay++) {
+        ideas.push({id:`move:${id}:${toDay}`, taskId:id, type:'move', toDay, needsApproval:false, impact,
+          label:`Move ${title} target to ${destinationLabel(days, toDay)}`,
+          description:'Adjust an internal target within the hard deadline.', disruption:1});
+      }
     }
-    if(t.allowDrop) ideas.push({id:`drop:${t.id}`,taskId:t.id,type:'drop',needsApproval:false,label:t.isProposal?`Decline ${t.title}`:`Drop optional ${t.title}`,description:'Remove a genuinely optional commitment; do not drop required coursework.',impact:t.likely*60,disruption:5});
-    if((t.reduceBy||0)>0){
-      ideas.push({id:`reduce:${t.id}`,taskId:t.id,type:'reduce',amount:t.reduceBy,needsApproval:!!t.reductionNeedsApproval,label:`Reduce ${t.title} scope by ${t.reduceBy}h`,description:t.reductionNeedsApproval?'Only valid after the supervisor or teammate agrees.':'Only remove work explicitly identified as nonessential.',impact:t.reduceBy*60,disruption:3});
+    if (task.allowDrop) {
+      ideas.push({id:`drop:${id}`, taskId:id, type:'drop', needsApproval:false, impact,
+        label:`${task.isProposal ? 'Decline' : 'Drop optional'} ${title}`,
+        description:'Remove a genuinely optional commitment.', disruption:5});
     }
-    if(t.canRequestExtension&&t.hardDay<days.length-1){
-      const day=t.hardDay+1;
-      ideas.push({id:`extend:${t.id}:${day}`,taskId:t.id,type:'extend',toDay:day,needsApproval:true,label:`Request ${t.title} deadline on ${engineDayName(days,day)}`,description:'A hypothetical extension only. Original deadline stays binding until approved.',impact:t.likely*60,disruption:2});
+    if (task.reduceBy > 0) {
+      const amount = task.reduceBy;
+      const needsApproval = Boolean(task.reductionNeedsApproval);
+      ideas.push({id:`reduce:${id}`, taskId:id, type:'reduce', amount, needsApproval, impact:amount * 60,
+        label:`Reduce ${title} scope by ${amount}h`,
+        description:needsApproval ? 'Keep the current scope until agreement.' : 'Remove work identified as nonessential.',
+        disruption:3});
+    }
+    if (task.canRequestExtension && hardDay < days.length - 1) {
+      const toDay = hardDay + 1;
+      ideas.push({id:`extend:${id}:${toDay}`, taskId:id, type:'extend', toDay, needsApproval:true, impact,
+        label:`Request ${title} deadline on ${destinationLabel(days, toDay)}`,
+        description:'Keep the current deadline until approval.', disruption:2});
     }
   }
   return ideas;
 }
-function simulateAction(tasks, action){
-  return tasks.map(t=>{
-    if(t.id!==action.taskId)return {...t};
-    if(action.type==='move')return {...t,targetDay:action.toDay};
-    if(action.type==='extend')return {...t,targetDay:action.toDay,hardDay:action.toDay};
-    if(action.type==='drop')return {...t,removed:true};
-    if(action.type==='reduce')return {...t,min:Math.max(0,t.min-action.amount),likely:Math.max(0,t.likely-action.amount),max:Math.max(0,t.max-action.amount),reduceBy:0};
-    throw Error('Unknown action');
+
+function simulateAction(tasks, action) {
+  return tasks.map(task => {
+    if (task.id !== action.taskId) return task;
+    switch (action.type) {
+      case 'move': return {...task,targetDay:action.toDay};
+      case 'extend': return {...task,targetDay:action.toDay,hardDay:action.toDay};
+      case 'drop': return {...task,removed:true};
+      case 'reduce': {
+        const reduce = hours => Math.max(0, hours - action.amount);
+        return {...task,min:reduce(task.min),likely:reduce(task.likely),max:reduce(task.max),reduceBy:0};
+      }
+      default: throw Error('Unknown action.');
+    }
   });
 }
+
 export function applyAction(tasks, action, {approved = false} = {}) {
   const task = tasks.find(t => t.id === action.taskId && !t.removed);
   if (!task) throw Error('Repair task is no longer active.');
@@ -46,7 +73,7 @@ export function applyAction(tasks, action, {approved = false} = {}) {
   }
   const needsApproval = type === 'extend' || (type === 'reduce' && task.reductionNeedsApproval);
   if ((needsApproval || action.needsApproval) && approved !== true) throw Error('Record explicit approval before applying this action.');
-  return simulateAction(tasks, action);
+  return simulateAction(tasks, action).map(task => ({...task}));
 }
 
 export function findRepairs(tasks, days, options = {}) {
@@ -81,7 +108,8 @@ export function findRepairs(tasks, days, options = {}) {
     }
   }
   return accepted.sort((a, b) => a.score - b.score || lexical(a.id, b.id)).slice(0, 10)
-    .map(repair => ({...repair, test: evaluatePrepared(repair.updated, context)}));
+    .map(repair => ({...repair, updated:repair.updated.map(task => ({...task})),
+      test:evaluatePrepared(repair.updated, context)}));
 }
 
 export function applyRepair(tasks, days, repairId, {approvedActionIds = [], ...options} = {}) {
