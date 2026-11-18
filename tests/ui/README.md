@@ -1,3 +1,6 @@
-# Browser tests
+# Chromium smoke test
 
-Frontend owner: add Playwright tests for T21–T24 here during M5; earlier browser smoke checks can be manual or automated. Do not claim T21–T24 pass until the browser tests actually run.
+Start the local HTTP server from the repository root, then run
+`node tests/ui/browser-smoke.mjs` with Node.js 22+ and Chromium. Set
+`CHROMIUM` or `TEST_ORIGIN` to override the executable or server address.
+The test exercises T21–T24 in a temporary browser profile.

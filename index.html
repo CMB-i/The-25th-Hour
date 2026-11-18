@@ -1,508 +1,97 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta name="color-scheme" content="light" />
-  <title>The 25th Hour — Commitment Check</title>
-  <style>
-:root{--navy:#131b28;--ink:#182438;--sub:#657080;--line:#e4e8ed;--paper:#f6f8fa;--white:#fff;--teal:#217d72;--amber:#ad681f;--red:#b94f4b;--purple:#6155ac;--shadow:0 11px 30px rgba(22,35,55,.05)}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f8fafb;color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.5}button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}a{color:inherit;text-decoration:none}.shell{max-width:1540px;margin:auto}.masthead{height:78px;display:flex;justify-content:space-between;align-items:center;padding:0 54px;background:white;border-bottom:1px solid var(--line)}.brand{display:flex;align-items:center;gap:13px}.brand-symbol{font-family:Georgia,serif;font-size:38px;letter-spacing:-3px;font-weight:800;color:#1d7771;position:relative}.brand-star{font-family:sans-serif;font-size:14px;vertical-align:top;letter-spacing:0;color:#e5a968}.brand-text{font-weight:900;letter-spacing:2.1px;font-size:14px}.brand-text small{font-weight:650;display:block;color:#96a2ab;font-size:9px;letter-spacing:2.6px;margin-top:2px}.masthead-right{color:#7a8793;font-size:11px;display:flex;gap:9px;align-items:center}.status-dot{background:#2c998a;width:7px;height:7px;display:inline-block;border-radius:50%;box-shadow:0 0 0 3px #e5f7f1}.top-divider{height:13px;width:1px;background:#ced7de;margin:0 7px}.hero{min-height:345px;padding:63px 70px 54px;background:var(--navy);color:#fff;display:grid;grid-template-columns:1.2fr .8fr;overflow:hidden;position:relative}.hero:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 79% 45%,rgba(38,141,128,.14),transparent 40%)}.hero-copy{z-index:1}.eyebrow{letter-spacing:2.4px;color:#82d2be;font-size:10px;font-weight:800}.eyebrow-icon{margin-right:8px}.eyebrow.subtle{color:#518e88}.hero h1{font-size:clamp(42px,4.25vw,65px);line-height:1.06;letter-spacing:-3.5px;margin:18px 0 20px;font-weight:750}.hero h1 em{font-family:Georgia,serif;font-weight:400;font-style:italic;color:#99d6c8}.hero p{color:#adb9c5;font-size:15px;max-width:520px;line-height:1.8;margin:0}.hero-pills{display:flex;gap:9px;flex-wrap:wrap;margin-top:24px}.hero-pills span{color:#b7c2c9;border:1px solid #374150;border-radius:999px;padding:7px 12px;font-size:10px}.hero-pills b{color:#fff;font-weight:650}.hero-art{position:relative;height:245px;z-index:1}.orb{position:absolute;border-radius:50%;border:1px solid rgba(107,201,175,.12)}.orb-one{width:300px;height:300px;right:60px;top:-42px;box-shadow:0 0 0 25px rgba(95,174,156,.05),0 0 0 50px rgba(95,174,156,.025)}.orb-two{width:155px;height:155px;right:120px;top:25px;background:radial-gradient(circle,rgba(74,169,155,.15),transparent)}.art-card{position:absolute;width:255px;right:78px;top:7px;background:#f6f9f7;color:#192a35;padding:21px 23px;border-radius:13px;transform:rotate(7deg);box-shadow:0 24px 35px rgba(0,0,0,.18)}.art-line{width:36px;height:4px;background:#2d8e80;border-radius:8px;margin-bottom:18px}.art-title{color:#81919b;letter-spacing:1.6px;font-size:9px;font-weight:800}.art-big{font-size:92px;font-weight:800;line-height:1.05;letter-spacing:-9px}.art-big span{font-family:Georgia,serif;font-style:italic;color:#208275;font-weight:400;font-size:42px;letter-spacing:0}.art-bands{display:flex;gap:3px;height:12px;margin:7px 0 22px}.art-bands span{background:#287f78;flex:3;border-radius:3px}.art-bands span:nth-child(2){background:#d2a36d;flex:4}.art-bands span:nth-child(3){background:#71669d;flex:2}.art-bands span:nth-child(4){background:#bac9d0;flex:1}.art-foot{color:#809099;font-size:11px}.workspace,.deep-dive{padding:38px 54px 0}.section-intro{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:21px}.section-intro h2{font-size:28px;letter-spacing:-1.2px;margin:3px 0}.section-intro p{color:var(--sub);margin:0;max-width:690px}.button{border-radius:8px;padding:10px 16px;font-weight:750;font-size:12px;border:1px solid transparent;transition:transform .15s,background .15s}.button:not(:disabled):hover{transform:translateY(-1px)}.button-quiet{background:white;border-color:var(--line);color:#667381}.button-primary{background:#207f73;color:#fff}.button-secondary{background:#e6f3f0;color:#1a786d}.button-outline{background:white;color:#2c706b;border:1px solid #b4d9ce}.scenario-choices{display:flex;gap:10px;margin-bottom:20px}.scenario-button{text-align:left;border:1px solid var(--line);background:white;padding:12px 18px;border-radius:10px;display:flex;align-items:center;gap:13px;min-width:285px;color:var(--ink)}.scenario-button b{display:grid;place-items:center;border-radius:7px;background:#f2f4f6;font-size:11px;width:32px;height:32px;color:#84929f}.scenario-button span{display:flex;flex-direction:column}.scenario-button strong{font-size:12px}.scenario-button small{font-size:11px;color:#7d8a96}.scenario-button.active{border-color:#4dada1;background:#f0faf7;box-shadow:0 0 0 1px #4dada1}.scenario-button.active b{background:#d4eee6;color:#217d72}.workspace-grid{display:grid;grid-template-columns:minmax(285px,350px) minmax(0,1fr);align-items:start;gap:20px}.panel{background:white;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}.control-panel{padding:25px 23px}.panel-label{font-size:10px;font-weight:850;letter-spacing:1.5px;color:#8b98a3;display:flex;align-items:center;gap:10px}.panel-index{background:#e8f5f1;color:#2e8375;padding:5px 6px;border-radius:5px;letter-spacing:0;font-size:9px}h3{font-size:19px;letter-spacing:-.5px;margin:12px 0 7px}p.helper{font-size:12px;color:#758392;line-height:1.65;margin:3px 0 17px}.research-box{border:1px solid #bfded7;background:#f2faf7;border-radius:10px;padding:16px;margin:18px 0}.check-line{display:flex;align-items:center;gap:12px}.check-line b{font-size:12px}.check-line small{display:block;color:#82918b;font-size:11px;margin-top:2px}.toggle{position:relative;width:36px;height:21px;flex-shrink:0}.toggle input{opacity:0;position:absolute}.switch{position:absolute;inset:0;background:#c0cecf;border-radius:20px;transition:background .2s}.switch:after{content:"";width:15px;height:15px;background:#fff;position:absolute;left:3px;top:3px;border-radius:50%;transition:transform .2s}.toggle input:checked+.switch{background:#23887d}.toggle input:checked+.switch:after{transform:translateX(15px)}.range-label{display:flex;justify-content:space-between;margin-top:20px;font-size:11px;color:#697e7e}.range-label strong{font-size:15px;color:#217f75}.hour-range{width:100%;accent-color:#278d80;cursor:pointer;margin:9px 0 0}.range-ends{display:flex;justify-content:space-between;color:#9aa7a7;font-size:10px}.estimate-note{margin-top:13px;border-top:1px solid #cde6dd;padding-top:11px;color:#63847f;font-size:11px}.priority-head{display:flex;justify-content:space-between;font-size:10px;color:#778590;text-transform:uppercase;letter-spacing:1px;font-weight:800;margin-bottom:7px}.priority-head span{font-size:9px}.task-row{padding:11px 0;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:1px solid #f0f2f5}.task-row-title{display:flex;flex-direction:column;gap:3px}.task-row-title strong{font-size:11px;color:#2c3745}.task-row-title small{color:#9aa5ae;font-size:10px}.task-pill{font-size:9px;padding:4px 7px;border-radius:5px;white-space:nowrap;background:#f2f4f6;color:#7f8995}.task-pill.flexible{background:#fef4e8;color:#aa773d}.task-pill.droppable{background:#f7eaea;color:#b16e61}.import-disclosure{margin-top:20px;border-top:1px solid var(--line);padding-top:13px}.import-disclosure>button{background:none;border:0;padding:0;color:#347c73;font-weight:750;font-size:11px;width:100%;display:flex;justify-content:space-between;text-align:left}.import-disclosure p{font-size:11px;color:var(--sub)}#import-pane{padding-top:12px}#import-pane label{display:block;font-size:10px;font-weight:700;color:#74808d;margin:8px 0 5px}#import-pane input,#import-pane textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font-size:11px;resize:vertical}#import-pane button{margin-top:10px}#import-message{font-size:11px;color:#657080;margin-top:8px;white-space:pre-line}.freshness{display:flex;align-items:center;gap:9px;color:#95a2a9;font-size:10px;margin-top:20px}.freshness .status-dot{width:5px;height:5px}.results-panel{display:flex;flex-direction:column;gap:18px}.verdict-card{background:#fff;border:1px solid #e4e8ed;padding:21px 25px;border-radius:12px;box-shadow:var(--shadow);display:flex;gap:20px;align-items:center;justify-content:space-between}.verdict-card.alert{background:#fff8f6;border-color:#f2d3cd}.verdict-card.risk{background:#fffbf3;border-color:#f3dfba}.verdict-card.good{background:#f6fbf8;border-color:#ceeadc}.verdict-left{flex:1}.verdict-top{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:#9d8582;font-weight:850}.verdict-left h2{font-size:26px;margin:4px 0 6px;letter-spacing:-.9px}.verdict-left p{font-size:12px;color:#6d7683;margin:0;max-width:490px}.verdict-metrics{display:flex;gap:10px}.metric{text-align:center;min-width:99px;padding:13px 12px;border:1px solid #e3e5e8;border-radius:8px;background:#fff}.metric b{display:block;font-size:23px;letter-spacing:-1px}.metric small{display:block;color:#96a0a8;font-size:9px;text-transform:uppercase;font-weight:800;letter-spacing:.7px}.metric.negative b{color:#be584e}.metric.positive b{color:#318676}.comparison,.strategy-area{padding:22px}.panel-title-line{display:flex;align-items:start;justify-content:space-between;gap:12px}.panel-title-line h3{margin:11px 0 15px}.comparison-chip,.pill{color:#85939d;font-size:9px;background:#f2f4f6;border-radius:99px;padding:6px 10px;white-space:nowrap}.comparison-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.compare-card{background:#fbfcfd;border:1px solid #e7ecf0;border-radius:9px;padding:15px 13px;min-height:155px}.compare-card.highlight{border-color:#a7d7cb;background:#f3faf7}.compare-label{font-size:10px;font-weight:800;color:#8293a0;text-transform:uppercase;letter-spacing:.7px}.compare-num{font-size:21px;font-weight:750;letter-spacing:-.5px;margin:9px 0 5px}.compare-body{color:#71808c;font-size:11px;line-height:1.6}.compare-tag{margin-top:8px;font-size:10px;font-weight:750;color:#a25a43}.compare-tag.positive{color:#2a8777}.strategy-area .panel-title-line h3{margin:11px 0 4px}.strategy-area .panel-title-line p{margin-bottom:18px}.strategy-layout{display:grid;grid-template-columns:1fr minmax(245px,.93fr);gap:12px}.strategy-list{display:flex;flex-direction:column;gap:9px}.repair{border:1px solid #e5e9ed;padding:12px;border-radius:9px;background:white;text-align:left;width:100%;display:flex;gap:11px;align-items:start}.repair.selected{border-color:#55aea1;background:#f2faf7;box-shadow:0 0 0 1px #55aea1}.repair-num{width:26px;height:26px;background:#edf0f2;display:grid;place-items:center;border-radius:7px;color:#74828b;font-weight:850;font-size:10px;flex-shrink:0}.repair.selected .repair-num{background:#ccece2;color:#237c70}.repair b{font-size:11px;display:block}.repair small{display:block;color:#8e9aa2;font-size:10px;line-height:1.45;margin-top:3px}.repair-status{color:#1c7e73;font-size:9px;font-weight:800;margin-top:7px}.repair-status.pending{color:#b17739}.strategy-preview{background:#f6f9f8;border:1px solid #e5ece9;border-radius:9px;padding:16px;min-height:245px}.preview-kicker{font-size:9px;font-weight:850;color:#77918b;letter-spacing:1px}.strategy-preview h4{margin:8px 0;font-size:14px;line-height:1.4}.strategy-preview p{font-size:11px;color:#76848a;line-height:1.55;margin:6px 0 11px}.preview-facts{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:12px 0}.preview-fact{background:white;border-radius:7px;padding:9px}.preview-fact span{font-size:9px;color:#8d99a3}.preview-fact b{display:block;font-size:14px}.strategy-preview .button{width:100%;margin-top:6px}.tiny-warning{font-size:10px;color:#b27638;margin-top:10px}.deep-grid{display:grid;grid-template-columns:1.45fr 1fr;gap:18px}.schedule-panel,.uncertainty-panel{padding:23px}.schedule-panel h3{margin-bottom:13px}.day-row{display:grid;grid-template-columns:82px minmax(0,1fr) 43px;gap:13px;align-items:center;margin:16px 0}.day-label b{display:block;font-size:11px}.day-label span{font-size:9px;color:#97a3aa}.slot-line{height:26px;display:flex;gap:2px}.slot{flex:1;border-radius:3px;background:#e9eff1;min-width:1px;position:relative}.slot.academic{background:#6155ac}.slot.poster{background:#e6a361}.slot.research{background:#408b85}.slot.late{box-shadow:inset 0 0 0 2px #d35c59;background:repeating-linear-gradient(45deg,#d35c59 0,#d35c59 3px,#f1b0a5 3px,#f1b0a5 6px)}.day-cap{color:#8897a1;font-size:10px;text-align:right}.legend{display:flex;gap:14px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:14px;margin-top:18px;color:#95a1a9;font-size:10px}.key-color{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:4px}.key-color.empty{background:#e9eff1}.key-color.late{background:repeating-linear-gradient(45deg,#d35c59 0,#d35c59 2px,#f1b0a5 2px,#f1b0a5 4px)}.uncertainty-panel h3{margin-bottom:2px}.estimate-row{display:grid;grid-template-columns:1fr 65px 75px;gap:6px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);font-size:11px}.estimate-row.header{color:#a1a9b1;font-size:9px;font-weight:850}.estimate-row b{font-size:11px}.estimate-row strong{text-align:right}.estimate-row span:last-child{text-align:right}.ok{color:#2d907d}.not-ok{color:#b94f4b}.risk-text{color:#ad791e}.risk-note{background:#f8f5ee;color:#95815c;padding:13px;border-radius:8px;font-size:11px;line-height:1.6;margin-top:19px}.bottom-note{background:#eaf2ef;margin:46px 54px 30px;padding:30px 40px;display:flex;gap:27px;align-items:center;border-radius:12px}.quote-mark{color:#60a69a;font:italic 75px Georgia,serif;align-self:start;line-height:1}.bottom-note h2{margin:0 0 7px;font-family:Georgia,serif;font-size:23px;font-weight:400;line-height:1.3;letter-spacing:-.5px}.bottom-note p{font-size:11px;color:#6d857f;max-width:820px;margin:0}.end-mark{font:italic 28px Georgia,serif;margin-left:auto;color:#4d988c;white-space:nowrap}footer{display:flex;justify-content:space-between;gap:10px;padding:23px 54px;color:#9da6ae;font-size:10px;border-top:1px solid var(--line);background:#fff}#toast{position:fixed;bottom:27px;right:27px;max-width:375px;background:#1e333e;color:white;border-radius:9px;padding:14px 18px;box-shadow:0 15px 25px rgba(0,0,0,.2);font-size:12px;line-height:1.5;opacity:0;pointer-events:none;transform:translateY(10px);transition:all .2s;z-index:20}#toast.show{opacity:1;transform:translateY(0)}
-@media(max-width:1090px){.workspace-grid{grid-template-columns:310px 1fr}.strategy-layout{grid-template-columns:1fr}.verdict-card{align-items:start}.verdict-metrics{flex-direction:column}.metric{min-width:95px;padding:7px}.metric b{font-size:20px}}@media(max-width:850px){.masthead{padding:0 23px}.hero{padding:45px 30px;grid-template-columns:1fr}.hero-art{display:none}.workspace,.deep-dive{padding:30px 20px 0}.workspace-grid,.deep-grid{grid-template-columns:1fr}.scenario-choices{flex-wrap:wrap}.scenario-button{flex:1;min-width:220px}.control-panel{order:0}.results-panel{order:1}.verdict-metrics{flex-direction:row}.bottom-note{margin:35px 20px;padding:24px}footer{padding:20px}.masthead-right{display:none}}@media(max-width:520px){.masthead{height:62px}.brand-text{font-size:11px;letter-spacing:1px}.hero h1{font-size:44px;letter-spacing:-2px}.hero{padding:42px 23px}.hero-pills span{font-size:9px}.section-intro{align-items:start}.section-intro h2{font-size:25px}.section-intro .button{font-size:10px;padding:8px}.scenario-button{min-width:100%}.verdict-card{flex-direction:column}.verdict-metrics{width:100%}.metric{flex:1}.comparison-cards{grid-template-columns:1fr}.compare-card{min-height:0}.day-row{grid-template-columns:55px minmax(0,1fr) 28px;gap:7px}.bottom-note{gap:12px}.bottom-note h2{font-size:19px}.end-mark{display:none}}
-
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./src/ui/styles.css">
+  <title>The 25th Hour</title>
 </head>
 <body>
-  <div class="shell">
-    <header class="masthead">
-      <a class="brand" href="#top" aria-label="The 25th Hour home"><span class="brand-symbol">25<span class="brand-star">✳</span></span><span class="brand-text">THE 25TH HOUR <small>COMMITMENT INTELLIGENCE</small></span></a>
-      <div class="masthead-right"><span class="status-dot"></span> Deterministic prototype <span class="top-divider"></span> <span id="updated">Sample data · 16–20 Nov 2026</span></div>
-    </header>
-    <main id="top">
-      <section class="hero">
-        <div class="hero-copy">
-          <span class="eyebrow"><span class="eyebrow-icon">✧</span> YOUR NEXT YES, UNDERSTOOD</span>
-          <h1>Know what your<br><em>next yes</em> will cost.</h1>
-          <p>Before you take on more, see what actually fits — and the smallest changes that make it work without borrowing time from sleep.</p>
-          <div class="hero-pills"><span>Sleep protected: <b>11 PM – 7 AM</b></span><span>Research: <b>4–6h estimate</b></span><span>Deadline-aware, not just hour-counting</span></div>
-        </div>
-        <div class="hero-art" aria-hidden="true"><div class="orb orb-one"></div><div class="orb orb-two"></div><div class="art-card"><div class="art-line"></div><div class="art-title">YOUR WEEK HAS A LIMIT</div><div class="art-big">24<span>h</span></div><div class="art-bands"><span></span><span></span><span></span><span></span></div><div class="art-foot">Make room for what matters.</div></div></div>
-      </section>
-      <section class="workspace">
-        <div class="section-intro"><div><span class="eyebrow subtle">INTERACTIVE LAB</span><h2>Try the decision.</h2><p>Start with a realistic overloaded student week. Change the commitment or scenario and see the verdict recomputed instantly.</p></div><button id="reset" class="button button-quiet">↻ Reset scenario</button></div>
-        <div class="scenario-choices" role="group" aria-label="Demo scenario"><button type="button" class="scenario-button active" id="scenario-flex" data-scenario="flex"><b>01</b><span><strong>Flexible target</strong><small>The club poster can move from Thu to Fri</small></span></button><button type="button" class="scenario-button" id="scenario-fixed" data-scenario="fixed"><b>02</b><span><strong>All deadlines fixed</strong><small>Nothing can move without an agreement</small></span></button></div>
-        <div class="workspace-grid">
-          <aside class="control-panel panel">
-            <div class="panel-label"><span class="panel-index">01</span> COMMITMENT CHECK</div>
-            <h3>Should I say yes?</h3><p class="helper">You already have 13 hours of coursework and club work this week. A new research project just came up.</p>
-            <div class="research-box"><div class="check-line"><label class="toggle"><input id="research-toggle" type="checkbox" checked/><span class="switch"></span></label><div><b>Accept research project</b><small>Due Thursday, Nov 19</small></div></div><div class="range-label"><span>Likely hours needed</span><strong id="research-hours">5h</strong></div><input class="hour-range" id="research-range" type="range" min="4" max="6" step="0.5" value="5" aria-label="Research assignment likely hours"/><div class="range-ends"><span>4h</span><span>6h</span></div><div class="estimate-note" id="estimate-note">Planning range: 4–6 hours</div></div>
-            <div class="priority-head">Your current commitments <span>PRIORITY</span></div>
-            <div id="task-list"></div>
-            <div class="import-disclosure"><button type="button" id="import-toggle" aria-expanded="false">＋ Import calendar or paste deadlines <span>⌄</span></button><div id="import-pane" hidden><p>Optional. Imports only affect the demo week, 16–20 November 2026; nothing leaves your device.</p><label for="ics-file">Calendar file (.ics)</label><input id="ics-file" type="file" accept=".ics,text/calendar"/><label for="paste-tasks">Paste tasks (one per line)</label><textarea id="paste-tasks" rows="3" placeholder="Quiz revision | 2h | 2026-11-19 | must-keep"></textarea><button type="button" id="paste-button" class="button button-secondary">Add pasted tasks</button><div id="import-message" role="status"></div></div></div>
-            <div class="freshness"><span class="status-dot"></span><span id="freshness-text">Sample week · preloaded tasks</span></div>
-          </aside>
-          <section class="results-panel">
-            <div class="verdict-card" id="verdict-card"></div>
-            <div class="comparison panel"><div class="panel-title-line"><div><span class="panel-label"><span class="panel-index">02</span> SIDE-BY-SIDE</span><h3>Three ways to check one week.</h3></div><span class="comparison-chip">Same inputs · different intelligence</span></div><div class="comparison-cards" id="comparison-cards"></div></div>
-            <div class="strategy-area panel"><div class="panel-title-line"><div><span class="panel-label"><span class="panel-index">03</span> RESCUE ENGINE</span><h3 id="rescue-title">Smallest verified changes.</h3><p class="helper">Every proposed adjustment is rescheduled and checked again. Requests requiring another person's approval remain hypothetical.</p></div><span class="pill">No silent deadline changes</span></div><div class="strategy-layout"><div class="strategy-list" id="strategy-list"></div><div class="strategy-preview" id="strategy-preview"></div></div></div>
-          </section>
-        </div>
-      </section>
-      <section class="deep-dive">
-        <div class="section-intro"><div><span class="eyebrow subtle">THE EVIDENCE</span><h2>Not just a green calendar.</h2><p>We distinguish your internal targets from hard deadlines and show the uncertainty behind every verdict.</p></div></div>
-        <div class="deep-grid"><div class="panel schedule-panel"><div class="panel-title-line"><div><span class="panel-label">TIME ALLOCATION</span><h3 id="allocation-title">Current schedule</h3></div><span class="pill">30-minute slots</span></div><div id="timeline"></div><div class="legend"><span><i class="key-color" style="background:#6155ac"></i> Academic</span><span><i class="key-color" style="background:#e6a361"></i> Club</span><span><i class="key-color" style="background:#408b85"></i> New research</span><span><i class="key-color empty"></i> Free</span><span><i class="key-color late"></i> After deadline</span></div></div><div class="panel uncertainty-panel"><span class="panel-label">ESTIMATE UNCERTAINTY</span><h3>One answer isn't enough.</h3><p class="helper">We check optimistic, likely, and conservative durations instead of treating estimated hours as exact.</p><div id="uncertainty-table"></div><div class="risk-note" id="risk-note"></div></div></div>
-      </section>
-      <section class="bottom-note"><div class="quote-mark">“</div><div><h2>A calendar can tell you when you're busy.<br>We tell you what needs to change.</h2><p>The 25th Hour is a decision-support prototype, not a sleep diagnosis or a promise that planning alone improves actual sleep. Our next test is whether students act on the suggestions and sleep more.</p></div><span class="end-mark">25✳</span></section>
-    </main>
-    <footer><span>The 25th Hour · Student-first by design</span><span>Prototype engine · no external accounts, payments, or live integrations</span></footer>
-  </div>
-  <div id="toast" role="status" aria-live="polite"></div>
-  <script type="module">
-/** The 25th Hour — deterministic, 30-minute, preemptive prototype scheduler.
- * Times are local to the campus (Asia/Kolkata in the demo). The input days
- * contain explicit availability windows; busy appointments and protected sleep
- * are subtracted from those windows. No third-party APIs or AI calls.
- */
-const HALF_HOUR = 30;
-const DAY_MINUTES = 1440;
-const minOf = hhmm => {
-  if (!/^\d\d:\d\d$/.test(hhmm)) throw Error(`Bad time: ${hhmm}`);
-  const [h,m]=hhmm.split(':').map(Number);
-  if(h>23||m>59) throw Error(`Bad time: ${hhmm}`);
-  return h*60+m;
-};
-const fmtMinutes = minutes => `${Math.floor(minutes/60)}h${minutes%60 ? ` ${minutes%60}m`:''}`;
-const fmtTime = minutes => `${String(Math.floor(minutes/60)).padStart(2,'0')}:${String(minutes%60).padStart(2,'0')}`;
-const overlap = (a,b,c,d) => a<d && c<b;
-function inSleep(start,end,sleep) {
-  const a=minOf(sleep.start), b=minOf(sleep.end);
-  if (a===b) return false;
-  if(a<b) return overlap(start,end,a,b);
-  return overlap(start,end,a,DAY_MINUTES)||overlap(start,end,0,b);
-}
-function makeSlots(days, sleep={start:'23:00',end:'07:00'}) {
-  const slots=[];
-  days.forEach((day,dayIndex)=>{
-    const windows=day.workWindows||[];
-    const busy=day.busyWindows||[];
-    const occupied=new Set();
-    windows.forEach(([begin,finish])=>{
-      const st=minOf(begin), en=minOf(finish);
-      if(st>=en||st%30||en%30) throw Error(`Work windows must be same-day and half-hour aligned: ${day.date}`);
-      for(let m=st;m<en;m+=HALF_HOUR) {
-        if(inSleep(m,m+HALF_HOUR,sleep)) continue;
-        if(busy.some(([s,e])=>overlap(m,m+HALF_HOUR,minOf(s),minOf(e)))) continue;
-        if(occupied.has(m)) continue;
-        occupied.add(m);
-        slots.push({date:day.date,dayIndex,start:m,end:m+HALF_HOUR,label:`${fmtTime(m)}–${fmtTime(m+HALF_HOUR)}`});
-      }
-    });
-  });
-  return slots.sort((a,b)=>a.dayIndex-b.dayIndex||a.start-b.start);
-}
-function check(tasks,days){
-  const ids=new Set();
-  for(const t of tasks){
-    if(ids.has(t.id)) throw Error(`Duplicate task ID: ${t.id}`);
-    ids.add(t.id);
-    if(!t.id||!t.title)throw Error('Task needs an ID and title');
-    if(!Number.isInteger(t.targetDay)||!Number.isInteger(t.hardDay)||t.targetDay<0||t.hardDay>=days.length||t.targetDay>t.hardDay) throw Error(`Invalid target/hard deadline for ${t.title}`);
-    if(!Number.isInteger(t.earliestDay)||t.earliestDay<0||t.earliestDay>t.hardDay)throw Error(`Invalid earliest start for ${t.title}`);
-    if(!(t.min>=0&&t.min<=t.likely&&t.likely<=t.max)) throw Error(`Invalid duration range for ${t.title}`);
-    if([t.min,t.likely,t.max].some(n=>(n*60)%HALF_HOUR!==0)) throw Error(`Use half-hour duration increments: ${t.title}`);
-  }
-}
-const clone = tasks => tasks.map(t=>({...t}));
-const durationKey = {optimistic:'min',typical:'likely',conservative:'max'};
-function schedule(tasks, days, {sleep={start:'23:00',end:'07:00'}, estimate='typical', deadline='target'}={}) {
-  check(tasks,days);
-  const key=durationKey[estimate];
-  if(!key)throw Error(`Bad estimate: ${estimate}`);
-  if(!['target','hard'].includes(deadline))throw Error('Bad deadline mode');
-  const usable=tasks.filter(t=>!t.removed);
-  const slots=makeSlots(days,sleep);
-  const remaining=new Map(usable.map(t=>[t.id,Math.round(t[key]*60)]));
-  const alloc=[];
-  for(const slot of slots){
-    const choices=usable.filter(t=>t.earliestDay<=slot.dayIndex && remaining.get(t.id)>0);
-    if(!choices.length)continue;
-    choices.sort((a,b)=>a[deadline+'Day']-b[deadline+'Day']||(a.priority??2)-(b.priority??2)||a.id.localeCompare(b.id));
-    const t=choices[0];
-    // Every task in this MVP is interruptible. Fixed-length activities belong
-    // in busyWindows; we do not silently split tasks marked otherwise.
-    if(t.splittable===false)throw Error(`Uninterrupted task ${t.title} is unsupported; add it as a fixed busy appointment.`);
-    const used=Math.min(HALF_HOUR,remaining.get(t.id));
-    remaining.set(t.id,remaining.get(t.id)-used);
-    alloc.push({...slot,taskId:t.id,taskTitle:t.title,minutes:used,late:slot.dayIndex>t[deadline+'Day']});
-  }
-  const taskResults=usable.map(t=>{
-    const mine=alloc.filter(a=>a.taskId===t.id);
-    const scheduled=mine.reduce((a,x)=>a+x.minutes,0);
-    const missing=remaining.get(t.id);
-    const late=mine.filter(x=>x.late).reduce((a,x)=>a+x.minutes,0);
-    const workedBeforeDeadline=mine.filter(x=>!x.late).reduce((a,x)=>a+x.minutes,0);
-    return {id:t.id,title:t.title,required:Math.round(t[key]*60),scheduled,missing,late,shortByDeadline:Math.max(0,Math.round(t[key]*60)-workedBeforeDeadline),dueDay:t[deadline+'Day']};
-  });
-  const byDay=days.map((d,i)=>({date:d.date,index:i,capacity:slots.filter(s=>s.dayIndex===i).length*HALF_HOUR,assigned:alloc.filter(s=>s.dayIndex===i)}));
-  const misses=taskResults.filter(t=>t.shortByDeadline>0);
-  const late=taskResults.reduce((a,t)=>a+t.late+t.missing,0);
-  const deadlineMargins=[...new Set(usable.map(t=>t[deadline+'Day']))].sort((a,b)=>a-b).map(dayIndex=>{
-    const demand=usable.filter(t=>t[deadline+'Day']<=dayIndex).reduce((a,t)=>a+t[key]*60,0);
-    const capacity=byDay.filter(d=>d.index<=dayIndex).reduce((a,d)=>a+d.capacity,0);
-    return {dayIndex,capacity,demand,margin:capacity-demand};
-  });
-  return {feasible:misses.length===0,lateMinutes:late,requiredMinutes:taskResults.reduce((a,t)=>a+t.required,0),capacityMinutes:slots.length*HALF_HOUR,alloc,byDay,taskResults,misses,deadlineMargins};
-}
-function evaluate(tasks,days,{sleep={start:'23:00',end:'07:00'},deadline='target',minimumCushionMinutes=60}={}) {
-  const optimistic=schedule(tasks,days,{sleep,estimate:'optimistic',deadline});
-  const typical=schedule(tasks,days,{sleep,estimate:'typical',deadline});
-  const conservative=schedule(tasks,days,{sleep,estimate:'conservative',deadline});
-  const minMargin=conservative.deadlineMargins.length?Math.min(...conservative.deadlineMargins.map(x=>x.margin)):Infinity;
-  let verdict='feasible', reason='Even conservative estimates fit with a reasonable deadline buffer.';
-  if(!optimistic.feasible){verdict='infeasible';reason='Even optimistic task durations cannot meet every deadline.';}
-  else if(!typical.feasible){verdict='at-risk';reason='Optimistic durations fit, but typical estimates miss at least one deadline.';}
-  else if(!conservative.feasible){verdict='at-risk';reason='Typical durations fit, but conservative estimates miss a deadline.';}
-  else if(minMargin<minimumCushionMinutes){verdict='at-risk';reason='All estimates fit, but at least one deadline has less than one hour of conservative slack.';}
-  return {verdict,reason,minMargin,optimistic,typical,conservative};
-}
-function weeklyCheck(tasks,days,options={}){
-  const mins=tasks.filter(t=>!t.removed).reduce((a,t)=>a+t.likely*60,0);
-  const capacity=makeSlots(days,options.sleep).length*HALF_HOUR;
-  return {feasible:mins<=capacity,requiredMinutes:mins,capacityMinutes:capacity};
-}
-const engineDayName=(days,i)=>new Date(`${days[i].date}T12:00:00`).toLocaleDateString('en-US',{weekday:'long'});
-function actionIdeas(tasks,days){
-  const ideas=[];
-  for(const t of tasks){
-    if(t.removed)continue;
-    if(t.flexible&&t.targetDay<t.hardDay) {
-      for(let day=t.targetDay+1;day<=t.hardDay;day++)ideas.push({id:`move:${t.id}:${day}`,taskId:t.id,type:'move',toDay:day,needsApproval:false,label:`Move ${t.title} target to ${engineDayName(days,day)}`,description:'Adjust an internal target without violating the final hard deadline.',impact:t.likely*60,disruption:1});
-    }
-    if(t.allowDrop) ideas.push({id:`drop:${t.id}`,taskId:t.id,type:'drop',needsApproval:false,label:t.isProposal?`Decline ${t.title}`:`Drop optional ${t.title}`,description:'Remove a genuinely optional commitment; do not drop required coursework.',impact:t.likely*60,disruption:5});
-    if((t.reduceBy||0)>0){
-      ideas.push({id:`reduce:${t.id}`,taskId:t.id,type:'reduce',amount:t.reduceBy,needsApproval:!!t.reductionNeedsApproval,label:`Reduce ${t.title} scope by ${t.reduceBy}h`,description:t.reductionNeedsApproval?'Only valid after the supervisor or teammate agrees.':'Only remove work explicitly identified as nonessential.',impact:t.reduceBy*60,disruption:3});
-    }
-    if(t.canRequestExtension&&t.hardDay<days.length-1){
-      const day=t.hardDay+1;
-      ideas.push({id:`extend:${t.id}:${day}`,taskId:t.id,type:'extend',toDay:day,needsApproval:true,label:`Request ${t.title} deadline on ${engineDayName(days,day)}`,description:'A hypothetical extension only. Original deadline stays binding until approved.',impact:t.likely*60,disruption:2});
-    }
-  }
-  return ideas;
-}
-function applyAction(tasks, action){
-  return tasks.map(t=>{
-    if(t.id!==action.taskId)return {...t};
-    if(action.type==='move')return {...t,targetDay:action.toDay};
-    if(action.type==='extend')return {...t,targetDay:action.toDay,hardDay:action.toDay};
-    if(action.type==='drop')return {...t,removed:true};
-    if(action.type==='reduce')return {...t,min:Math.max(0,t.min-action.amount),likely:Math.max(0,t.likely-action.amount),max:Math.max(0,t.max-action.amount)};
-    throw Error('Unknown action');
-  });
-}
-function findRepairs(tasks,days,options={}){
-  const base=evaluate(tasks,days,options);
-  if(base.typical.feasible&&base.verdict==='feasible')return [];
-  const ideas=actionIdeas(tasks,days), repairs=[];
-  // Explore one action and, if needed, two independent actions. We explicitly
-  // promise smallest *examined* change, not a globally optimal schedule.
-  const trials=ideas.map(a=>[a]);
-  for(let i=0;i<ideas.length;i++)for(let j=i+1;j<ideas.length;j++) {
-    if(ideas[i].taskId!==ideas[j].taskId)trials.push([ideas[i],ideas[j]]);
-  }
-  for(const actions of trials){
-    let updated=clone(tasks);
-    for(const a of actions)updated=applyAction(updated,a);
-    const test=evaluate(updated,days,options);
-    if(!test.typical.feasible)continue;
-    const needsApproval=actions.some(x=>x.needsApproval);
-    const dropped=actions.filter(a=>a.type==='drop').length;
-    const reduction=actions.filter(a=>a.type==='reduce').reduce((s,a)=>s+a.amount,0);
-    const risk=test.verdict==='at-risk';
-    const score=actions.length*100 + (needsApproval?55:0) + dropped*40 + reduction*15 + actions.reduce((s,a)=>s+a.disruption,0)*5 + (risk?8:0);
-    repairs.push({id:actions.map(x=>x.id).join('+'),actions,updated,test,needsApproval,score});
-  }
-  return repairs.sort((a,b)=>a.score-b.score||a.id.localeCompare(b.id)).slice(0,10);
-}
-function demoData(fixed=false){
-  const days=[
-    {date:'2026-11-16',workWindows:[['16:00','20:00']],busyWindows:[]},
-    {date:'2026-11-17',workWindows:[['17:00','20:00']],busyWindows:[]},
-    {date:'2026-11-18',workWindows:[['16:00','19:00']],busyWindows:[]},
-    {date:'2026-11-19',workWindows:[['16:00','19:00']],busyWindows:[]},
-    {date:'2026-11-20',workWindows:[['13:00','20:00']],busyWindows:[]}
-  ];
-  const t=(id,title,h,targetDay,hardDay,options={})=>({id,title,min:h,likely:h,max:h,targetDay,hardDay,earliestDay:0,priority:1,flexible:false,allowDrop:false,splittable:true,...options});
-  const tasks=[
-    t('dbms','DBMS Lab',4,1,1),
-    t('ml','ML Assignment',3,3,3),
-    t('poster','AUV Club Poster',3,3,fixed?3:4,{flexible:!fixed,canRequestExtension:fixed,priority:2}),
-    t('french','French Homework',3,4,4),
-    t('research','New Research Project',5,3,3,{min:4,likely:5,max:6,priority:2,isProposal:true,allowDrop:true,canRequestExtension:false})
-  ];
-  return {days,tasks,sleep:{start:'23:00',end:'07:00'}};
-}
-function draftApprovalRequest(repair,days){
-  const a=repair.actions.find(x=>x.needsApproval);
-  if(!a)return '';
-  const target=days[a.toDay]?.date;
-  if(a.type==='extend')return `Subject: Request to adjust ${repair.updated.find(t=>t.id===a.taskId)?.title} deadline\n\nHello,\n\nI am managing several overlapping academic commitments this week and would like to ask whether the deadline for ${repair.updated.find(t=>t.id===a.taskId)?.title} could be moved to ${target}. I understand the current deadline remains in effect unless this is approved. Please let me know if an extension is possible.\n\nThank you.`;
-  if(a.type==='reduce')return `Hello, could we discuss reducing the scope of ${repair.updated.find(t=>t.id===a.taskId)?.title} by ${a.amount} hours' worth of optional work? I will keep the current scope until we agree on a change.`;
-  return '';
-}
-/** A narrow, explicit importer for pasted tasks, not an unverified AI extraction.
- * Expected: Title | 3h | YYYY-MM-DD | must-keep/flexible/droppable
- */
-function parsePastedTasks(text,days){
-  const out=[];const errors=[];
-  text.split(/\r?\n/).filter(s=>s.trim()).forEach((line,i)=>{
-    const [title,rawHours,rawDate,rawPriority]=line.split('|').map(x=>x?.trim());
-    const hours=Number((rawHours||'').replace(/h$/i,''));
-    const day=days.findIndex(d=>d.date===rawDate);
-    if(!title||!Number.isFinite(hours)||hours<=0||(hours*60)%HALF_HOUR||day<0){errors.push(`Line ${i+1}: use Title | 3h | YYYY-MM-DD | must-keep/flexible/droppable (date in demo week).`);return;}
-    const p=(rawPriority||'must-keep').toLowerCase();
-    if(!['must-keep','flexible','droppable'].includes(p)){errors.push(`Line ${i+1}: invalid priority tag.`);return;}
-    out.push({id:`import-${i+1}-${title.toLowerCase().replace(/\W+/g,'-')}`,title,min:Math.max(.5,hours-.5),likely:hours,max:hours+.5,targetDay:day,hardDay:day,earliestDay:0,priority:p==='must-keep'?1:2,flexible:false,allowDrop:p==='droppable',splittable:true,canRequestExtension:false,isProposal:false});
-  });
-  return {tasks:out,errors};
-}
-/** Conservative .ics import: explicit local times, or UTC Z converted to Kolkata.
- * Unsupported recurrence, all-day events, and external TZIDs are skipped with
- * messages rather than silently producing misleading availability.
- */
-function parseIcs(text,days){
-  const result={events:[],warnings:[]};
-  const unfolded=text.replace(/\r?\n[ \t]/g,'').split(/\r?\n/);
-  let current=null;
-  const fields={};
-  const local=(value,key)=>{
-    if(key.includes('TZID=')&&!key.includes('Asia/Kolkata'))throw Error('Only Asia/Kolkata TZID is supported in this demo.');
-    if(!/^\d{8}T\d{6}Z?$/.test(value))throw Error('All-day or malformed event time is unsupported.');
-    const y=value.slice(0,4),m=value.slice(4,6),d=value.slice(6,8),h=value.slice(9,11),min=value.slice(11,13);
-    if(value.endsWith('Z')) {
-      const dt=new Date(`${y}-${m}-${d}T${h}:${min}:${value.slice(13,15)}Z`);
-      const f=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
-      const p=Object.fromEntries(f.formatToParts(dt).map(p=>[p.type,p.value]));
-      return {date:`${p.year}-${p.month}-${p.day}`,minutes:Number(p.hour)*60+Number(p.minute)};
-    }
-    return {date:`${y}-${m}-${d}`,minutes:Number(h)*60+Number(min)};
-  };
-  for(const raw of unfolded){
-    if(raw==='BEGIN:VEVENT'){current={};continue;}
-    if(raw==='END:VEVENT'){
-      if(current){
-        try{
-          if(current.RRULE)throw Error('Recurring events require expansion; import individual instances.');
-          if(!current.start||!current.end)throw Error('Missing start or end time.');
-          const s=local(...current.start),e=local(...current.end);
-          if(s.date!==e.date)throw Error('Cross-midnight event is unsupported.');
-          const index=days.findIndex(x=>x.date===s.date);
-          if(index<0)continue;
-          if(!(e.minutes>s.minutes))throw Error('Invalid event duration.');
-          result.events.push({index,date:s.date,start:fmtTime(s.minutes),end:fmtTime(e.minutes),summary:current.summary||'Imported appointment'});
-        }catch(e){result.warnings.push(`${current.summary||'Event'}: ${e.message}`);}
-      }
-      current=null;continue;
-    }
-    if(!current)continue;
-    const colon=raw.indexOf(':');if(colon<0)continue;
-    const key=raw.slice(0,colon),value=raw.slice(colon+1);
-    if(key.startsWith('DTSTART'))current.start=[value,key];
-    if(key.startsWith('DTEND'))current.end=[value,key];
-    if(key==='SUMMARY')current.summary=value;
-    if(key==='RRULE')current.RRULE=value;
-  }
-  return result;
-}
-
-let scenarioFixed=false;
-let includeResearch=true;
-let researchLikely=5;
-let appliedActions=[];
-let extraTasks=[];
-let extraEvents=[];
-let previewId=null;
-let editedAt=null;
-let toastTimeout=null;
-const el=id=>document.getElementById(id);
-const safe=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const hours=min=>(min/60).toLocaleString('en-US',{maximumFractionDigits:1})+'h';
-const dayName=(date)=>new Date(`${date}T12:00:00`).toLocaleDateString('en-US',{weekday:'short'});
-const statusName=s=>s==='at-risk'?'At risk':s==='infeasible'?'Infeasible':'Feasible';
-const cssVerdict=s=>s==='at-risk'?'risk':s==='infeasible'?'alert':'good';
-const taskKind=t=>t.allowDrop?'droppable':t.flexible?'flexible':'must-keep';
-function touch(){editedAt=new Date();}
-function showToast(s){
-  el('toast').textContent=s;el('toast').classList.add('show');
-  clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>el('toast').classList.remove('show'),3800);
-}
-function data(){
-  const d=demoData(scenarioFixed);
-  const research=d.tasks.find(t=>t.id==='research');
-  research.min=Math.max(.5,researchLikely-1);
-  research.likely=researchLikely;
-  research.max=researchLikely+1;
-  if(!includeResearch)d.tasks=d.tasks.filter(t=>t.id!=='research');
-  d.tasks=[...d.tasks,...extraTasks.map(t=>({...t}))];
-  for(const a of appliedActions)d.tasks=applyAction(d.tasks,a);
-  for(const evt of extraEvents) d.days[evt.index].busyWindows.push([evt.start,evt.end]);
-  return d;
-}
-function updateView(){
-  const d=data(),opts={sleep:d.sleep};
-  const e=evaluate(d.tasks,d.days,opts);
-  const naive=weeklyCheck(d.tasks,d.days,opts);
-  const repairs=findRepairs(d.tasks,d.days,opts);
-  let selected=repairs.find(r=>r.id===previewId);
-  if(!selected && repairs.length){selected=repairs[0];previewId=selected.id;}
-  if(!repairs.length){previewId=null;selected=null;}
-  renderControls(d);
-  renderVerdict(e,d);
-  renderComparisons(naive,e,repairs);
-  renderRepairs(e,repairs,selected,d);
-  renderTimeline(selected?selected.test.typical:e.typical,d,!!selected);
-  renderRangeTable(selected?selected.test:e,d,!!selected);
-  el('research-range').disabled=!includeResearch;
-  el('research-toggle').checked=includeResearch;
-  el('research-range').value=researchLikely;
-  el('research-hours').textContent=researchLikely+'h';
-  el('estimate-note').textContent=`Planning range: ${researchLikely-1}–${researchLikely+1} hours`;
-  el('updated').textContent=editedAt?`Edited locally at ${editedAt.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}`:'Sample data · 16–20 Nov 2026';
-  el('freshness-text').textContent=editedAt?`Data last edited ${editedAt.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})} · re-check commitments`:'Sample week · preloaded tasks';
-  el('scenario-flex').classList.toggle('active',!scenarioFixed);
-  el('scenario-fixed').classList.toggle('active',scenarioFixed);
-}
-function renderControls(d){
-  const e=el('task-list');
-  e.innerHTML=d.tasks.map(t=>{
-    const kind=taskKind(t);
-    const date=(i)=>dayName(d.days[i].date);
-    return `<div class="task-row"><div class="task-row-title"><strong>${safe(t.title)}${t.removed?' <span style="color:#b66c62">(removed)</span>':''}</strong><small>${safe(t.likely)}h · ${date(t.targetDay)} target${t.hardDay!==t.targetDay?` / ${date(t.hardDay)} final`:''}</small></div><span class="task-pill ${kind}">${kind==='must-keep'?'Must-keep':kind==='flexible'?'Flexible':'Droppable'}</span></div>`;
-  }).join('') || '<p class="helper">No tasks entered.</p>';
-}
-function renderVerdict(e,d){
-  const typical=e.typical,thu=typical.deadlineMargins.find(x=>x.dayIndex===3),
-    deficit=thu?Math.max(0,-thu.margin):0,
-    latest = typical.misses.map(x=>`${x.title}: ${fmtMinutes(x.shortByDeadline)} late`).join('; ');
-  const headline=e.verdict==='infeasible'?'This plan cannot meet its targets.':e.verdict==='at-risk'?'It fits, but there’s almost no room for error.':'This commitment fits your week.';
-  const message=e.verdict==='infeasible'?
-    `${latest}. You have ${hours(typical.capacityMinutes)} total workable hours, but that doesn't guarantee the right hours are before the deadlines.`:
-    e.verdict==='at-risk'?`Typical estimates fit, but uncertainty leaves little buffer. Your sleep window is still protected.`:
-    'The schedule has enough time before the applicable targets, including a cushion for longer-than-expected work.';
-  const gap=typical.misses.reduce((a,t)=>a+t.shortByDeadline,0);
-  el('verdict-card').className=`verdict-card ${cssVerdict(e.verdict)}`;
-  el('verdict-card').innerHTML=`<div class="verdict-left"><div class="verdict-top">LIVE VERDICT · ${safe(statusName(e.verdict).toUpperCase())}</div><h2>${safe(headline)}</h2><p>${safe(message)}</p></div><div class="verdict-metrics"><div class="metric"><b>${hours(typical.requiredMinutes)}</b><small>Required this week</small></div><div class="metric"><b>${hours(typical.capacityMinutes)}</b><small>Available this week</small></div><div class="metric ${gap?'negative':'positive'}"><b>${gap?`−${hours(gap)}`:'✓'}</b><small>${gap?'Deadline shortfall':'Target check'}</small></div></div>`;
-}
-function renderComparisons(w,e,repairs){
-  const weekday = w.feasible ? 'Fits in the week' : 'Overbooked overall';
-  const plain = e.typical.feasible?'Meets entered targets':`${hours(e.typical.misses.reduce((s,t)=>s+t.shortByDeadline,0))} deadline shortfall`;
-  const top=repairs[0];
-  const ours=top?`${top.needsApproval?'Approval needed':'Verified repair found'}`:(e.verdict==='feasible'?'No repair needed':e.verdict==='at-risk'?'Monitor narrow slack':'No verified repair');
-  el('comparison-cards').innerHTML=`<div class="compare-card"><div class="compare-label">01 · Weekly hours only</div><div class="compare-num">${w.feasible?'✓ Fits':'✕ Over'}</div><div class="compare-body">${hours(w.requiredMinutes)} of ${hours(w.capacityMinutes)} total. Does not check whether hours exist before deadlines.</div><div class="compare-tag ${w.feasible?'positive':''}">${weekday}</div></div><div class="compare-card"><div class="compare-label">02 · Deadline scheduler</div><div class="compare-num">${e.typical.feasible?'✓ Fits':'✕ Misses'}</div><div class="compare-body">Runs the same deadline-aware allocation, identifies timing conflicts, but stops without suggesting changes.</div><div class="compare-tag ${e.typical.feasible?'positive':''}">${safe(plain)}</div></div><div class="compare-card highlight"><div class="compare-label">03 · The 25th Hour</div><div class="compare-num">${top?'↗ Repair':e.verdict==='feasible'?'✓ Ready':'◷ Watch'}</div><div class="compare-body">Tests candidate changes, rechecks every deadline and protected sleep slot, and separates self-serve changes from approval requests.</div><div class="compare-tag ${top&&!top.needsApproval?'positive':''}">${safe(ours)}</div></div>`;
-}
-function renderRepairs(e,repairs,selected,d){
-  el('rescue-title').textContent=e.verdict==='feasible'?'No intervention needed.':e.verdict==='at-risk'?'Protect your buffer.':'Smallest verified changes.';
-  if(!repairs.length){
-    el('strategy-list').innerHTML='<div style="padding:15px;background:#f4f8f7;border-radius:9px;color:#63877d;font-size:12px">No adjustment needed for the current scenario. Add a commitment or change the workload to test the engine.</div>';
-    el('strategy-preview').innerHTML=`<span class="preview-kicker">CURRENT PLAN</span><h4>${safe(statusName(e.verdict))}</h4><p>${safe(e.reason)}</p><div class="tiny-warning">Every task is checked against its target. Sleep blocks remain unavailable for work.</div>`;
-    return;
-  }
-  el('strategy-list').innerHTML=repairs.map((r,i)=>{
-    const title=r.actions.map(a=>a.label).join(' + ');
-    const risk=r.test.verdict==='at-risk'?' · limited buffer':'';
-    const desc=`${r.actions.length} change${r.actions.length!==1?'s':''}${r.needsApproval?' · approval required':' · within your control'}${risk}`;
-    return `<button class="repair ${selected?.id===r.id?'selected':''}" data-repair="${safe(r.id)}"><span class="repair-num">${String(i+1).padStart(2,'0')}</span><span><b>${safe(title)}</b><small>${safe(desc)}</small><span class="repair-status ${r.needsApproval?'pending':''}">${r.needsApproval?'PENDING CONFIRMATION':'SELF-SERVE ADJUSTMENT'}</span></span></button>`;
-  }).join('');
-  const r=selected||repairs[0];
-  const description=r.actions.map(a=>a.description).join(' ');
-  const thu=r.test.typical.deadlineMargins.find(x=>x.dayIndex===3);
-  const thursday=thu?thu.margin:null;
-  el('strategy-preview').innerHTML=`<span class="preview-kicker">HYPOTHETICAL REPAIR PREVIEW</span><h4>${safe(r.actions.map(a=>a.label).join(' + '))}</h4><p>${safe(description)}</p><div class="preview-facts"><div class="preview-fact"><span>Rechecked target status</span><b style="color:${r.test.verdict==='at-risk'?'#ad791e':'#1d8b74'}">${safe(statusName(r.test.verdict))}</b></div><div class="preview-fact"><span>Thursday buffer · likely</span><b>${thursday==null?'n/a':thursday<0?`−${hours(-thursday)}`:`${hours(thursday)}`}</b></div></div><button class="button ${r.needsApproval?'button-secondary':'button-primary'}" data-apply="${safe(r.id)}">${r.needsApproval?'Simulate approved request':'Apply verified change'}</button>${r.needsApproval?`<button class="button button-outline" data-draft="${safe(r.id)}">Copy extension request draft</button><div class="tiny-warning">Approval is not automatic. Simulate approval only for the demonstration; until then the real plan stays unchanged.</div>`:`<div class="tiny-warning">Preview is not applied yet. All estimates and deadlines are rechecked after you apply.</div>`}`;
-}
-function renderTimeline(result,d,preview){
-  el('allocation-title').textContent=preview?'Repaired plan · preview only':'Your current plan';
-  const used=makeSlots(d.days,d.sleep);
-  el('timeline').innerHTML=d.days.map((day,i)=>{
-    const slots=used.filter(s=>s.dayIndex===i);
-    const blocks=slots.map(s=>{
-      const a=result.alloc.find(x=>x.dayIndex===i&&x.start===s.start);
-      const cls=!a?'':a.taskId==='research'?'research':a.taskId==='poster'?'poster':'academic';
-      return `<div class="slot ${cls} ${a?.late?'late':''}" title="${safe(dayName(day.date))} ${safe(s.label)} · ${safe(a?a.taskTitle:'Free capacity')}${a?.late?' · AFTER TARGET':''}"></div>`;
-    }).join('');
-    const booked=result.byDay[i].assigned.reduce((sum,a)=>sum+a.minutes,0);
-    const cap=slots.length*30;
-    return `<div class="day-row"><div class="day-label"><b>${dayName(day.date)}</b><span>${day.date.slice(5)}</span></div><div class="slot-line">${blocks||'<span class="helper">No available slots</span>'}</div><div class="day-cap" title="Booked / available">${hours(booked)}/${hours(cap)}</div></div>`;
-  }).join('');
-}
-function renderRangeTable(e,d,isPreview){
-  const labels=[['optimistic','Optimistic'],['typical','Typical'],['conservative','Conservative']];
-  el('uncertainty-table').innerHTML='<div class="estimate-row header"><span>ASSUMPTION</span><span>THU MARGIN</span><span>DEADLINES</span></div>'+labels.map(([key,label])=>{
-    const r=e[key],thu=r.deadlineMargins.find(m=>m.dayIndex===3);
-    const margin=thu?.margin??0;
-    return `<div class="estimate-row"><b>${label}</b><span style="color:${margin<0?'#be584e':'#408b85'}">${margin<0?'−':'+'}${hours(Math.abs(margin))}</span><strong class="${r.feasible?'ok':'not-ok'}">${r.feasible?'Fit':'Miss'}</strong></div>`;
-  }).join('');
-  const dur=d.tasks.find(t=>t.id==='research');
-  const which=isPreview?'Preview only: ':'Current plan: ';
-  el('risk-note').textContent=`${which}${e.reason} ${dur&&!dur.removed?`Research estimate: ${dur.min}–${dur.max} hours.`:''} The engine does not claim that a feasible plan guarantees actual sleep.`;
-}
-function render(){try{updateView();}catch(error){console.error(error);showToast('Scheduling error: '+error.message);}}
-function reset(){scenarioFixed=false;includeResearch=true;researchLikely=5;appliedActions=[];extraTasks=[];extraEvents=[];previewId=null;editedAt=null;el('paste-tasks').value='';el('ics-file').value='';el('import-message').textContent='';render();showToast('Prototype restored to its original flexible-target scenario.');}
-const resolveRepair=id=>findRepairs(data().tasks,data().days,{sleep:data().sleep}).find(r=>r.id===id);
-async function copyText(text){
-  try{await navigator.clipboard.writeText(text);showToast('Request copied. It has NOT been sent.');}
-  catch{
-    const t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();showToast('Request text copied; review before sending.');
-  }
-}
-document.addEventListener('click',async ev=>{
-  const scenario=ev.target.closest('[data-scenario]');
-  if(scenario){scenarioFixed=scenario.dataset.scenario==='fixed';appliedActions=[];previewId=null;touch();render();return;}
-  const repair=ev.target.closest('[data-repair]');
-  if(repair){previewId=repair.dataset.repair;render();return;}
-  const apply=ev.target.closest('[data-apply]');
-  if(apply){
-    const r=resolveRepair(apply.dataset.apply);
-    if(!r)return showToast('That repair is no longer available; refresh and try another.');
-    appliedActions.push(...r.actions);previewId=null;touch();render();
-    showToast(r.needsApproval?'Demo-only: approval was simulated. No real professor or teammate was contacted.':'Verified change applied; schedule recalculated.');
-    return;
-  }
-  const draft=ev.target.closest('[data-draft]');
-  if(draft){
-    const d=data(),r=resolveRepair(draft.dataset.draft);
-    if(r)await copyText(draftApprovalRequest(r,d.days)||'Please review and approve this proposed scheduling change.');
-  }
-});
-el('reset').addEventListener('click',reset);
-el('research-toggle').addEventListener('change',ev=>{includeResearch=ev.target.checked;appliedActions=[];previewId=null;touch();render();});
-el('research-range').addEventListener('input',ev=>{researchLikely=Number(ev.target.value);appliedActions=[];previewId=null;touch();render();});
-el('import-toggle').addEventListener('click',()=>{
-  const pane=el('import-pane');pane.hidden=!pane.hidden;el('import-toggle').setAttribute('aria-expanded',String(!pane.hidden));
-});
-el('paste-button').addEventListener('click',()=>{
-  const input=el('paste-tasks').value;
-  const d=data(); const parsed=parsePastedTasks(input,d.days);
-  const idSet=new Set(d.tasks.map(t=>t.id));
-  parsed.tasks=parsed.tasks.map(t=>{
-    let id=t.id, n=1;
-    while(idSet.has(id))id=t.id+':'+(++n);
-    idSet.add(id);return {...t,id};
-  });
-  extraTasks.push(...parsed.tasks);
-  el('import-message').textContent=`Added ${parsed.tasks.length} task(s). ${parsed.errors.join(' ')}`;
-  el('paste-tasks').value='';
-  if(parsed.tasks.length)touch();render();
-});
-el('ics-file').addEventListener('change',async ev=>{
-  const file=ev.target.files?.[0];if(!file)return;
-  try{
-    const d=data(),parsed=parseIcs(await file.text(),d.days);
-    extraEvents.push(...parsed.events);
-    el('import-message').textContent=`Imported ${parsed.events.length} timed event(s). ${parsed.warnings.length?`${parsed.warnings.length} skipped: ${parsed.warnings.slice(0,2).join('; ')}`:''}`;
-    if(parsed.events.length)touch();render();
-  }catch(error){el('import-message').textContent='Could not import file: '+error.message;}
-});
-render();
-
-</script>
+<header><h1>The 25th Hour</h1><p>Know what your next yes will cost.</p></header>
+<nav aria-label="Sections">
+  <a href="#week">My Week</a><a href="#check">Commitment Check</a><a href="#rescue">Rescue Engine</a>
+  <a href="#feedback">Reality Feedback</a><a href="#settings">Imports and Settings</a>
+</nav>
+<main>
+  <p id="notice" role="status"></p>
+  <section id="week">
+    <h2>My Week</h2>
+    <button id="demo-flexible">Flexible demo</button><button id="demo-fixed">Fixed demo</button>
+    <label id="research-controls"><input id="include-research" type="checkbox"> Include demo research
+      <input id="research-hours" type="number" min="4" max="6" step=".5" aria-label="Demo research hours"></label>
+    <p id="freshness"></p>
+    <div id="verdict" aria-live="polite"></div>
+    <button id="previous-week">Previous week</button><button id="next-week">Next week</button>
+    <p id="week-range"></p>
+    <div id="week-plan"></div>
+  </section>
+  <section id="check">
+    <h2>Commitment Check</h2>
+    <form id="proposal-form" novalidate>
+      <label>Name <input name="title" maxlength="80" required></label>
+      <label>Typical hours <input name="likely" type="number" min=".5" max="40" step=".5" required></label>
+      <label>Minimum hours <input name="min" type="number" min="0" step=".5"></label>
+      <label>Maximum hours <input name="max" type="number" min="0" step=".5"></label>
+      <label>Deadline <input name="deadline" type="date" required></label>
+      <label>Priority <select name="tag"><option>must-keep</option><option>flexible</option><option>droppable</option></select></label>
+      <label id="latest-field" hidden>Latest acceptable date <input name="latestDate" type="date"></label>
+      <label>Earliest start <input name="earliestDate" type="date"></label>
+      <label>Task type <select name="type"><option>other</option><option>problem_set</option><option>lab</option>
+        <option>report</option><option>reading</option><option>project</option><option>club</option></select></label>
+      <div id="estimate-suggestion"></div>
+      <p id="proposal-error" role="alert"></p>
+      <button>Check commitment</button>
+    </form>
+    <div id="proposals"></div>
+  </section>
+  <section id="rescue">
+    <h2>Rescue Engine</h2>
+    <div id="repairs"></div>
+    <div id="preview"></div>
+    <button id="undo">Undo last applied repair</button>
+  </section>
+  <section id="feedback">
+    <h2>Reality Feedback</h2>
+    <p id="feedback-prompt"></p>
+    <form id="completion-form">
+      <label>Task <select name="taskId" required></select></label>
+      <label>Actual hours <input name="actualHours" type="number" min="0" step=".5" required></label>
+      <label>Completion time (campus time) <input name="recordedAt" type="datetime-local" required></label>
+      <button>Mark completed and save</button><button id="as-planned" type="button">As planned</button>
+    </form>
+    <form id="sleep-form">
+      <label>Night ending on <input name="date" type="date" required></label>
+      <label>Hours slept (optional) <input name="hours" type="number" min="0" max="24" step=".5" required></label>
+      <label>Stress (optional) <input name="stress" type="number" min="1" max="5" step="1"></label>
+      <button>Save sleep report</button>
+    </form>
+    <div id="review"></div>
+  </section>
+  <section id="settings">
+    <h2>Imports and Settings</h2>
+    <p>This is a planning tool, not medical advice, and not a treatment for sleep or anxiety problems.</p>
+    <form id="settings-form">
+      <label>Protected sleep starts <input name="sleepStart" type="time" step="1800" required></label>
+      <label>Protected sleep ends <input name="sleepEnd" type="time" step="1800" required></label>
+      <label>Anchor date for five loaded weeks <input name="anchor" type="date" required></label>
+      <label>Weekly work windows (one per line, e.g. Mon 16:00-20:00)
+        <textarea name="windows" rows="6"></textarea>
+      </label>
+      <button>Save settings</button>
+      <p id="settings-error" role="alert"></p>
+    </form>
+    <form id="paste-form">
+      <label>Paste tasks (Title | 3h | YYYY-MM-DD | must-keep)
+        <textarea name="tasks" rows="4" required></textarea>
+      </label>
+      <button>Import tasks</button>
+    </form>
+    <label>Import calendar (.ics, up to 1 MB, read locally)<input id="calendar-file" type="file" accept=".ics,text/calendar"></label>
+    <p id="import-message" role="status"></p>
+    <button id="clear">Clear all my data</button>
+  </section>
+</main>
+<script type="module" src="./src/ui/app.mjs"></script>
 </body>
 </html>

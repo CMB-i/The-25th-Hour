@@ -90,3 +90,11 @@ If an exported name or return shape must change, update **this document first**,
 - `draftApprovalRequest` accepts `{includeWorkload: true}` only after the student opts in. `emptyRepairMessage(verdict)` supplies the three empty states.
 - `Evaluation.minMargin` is null for an empty deadline set. Loaded dates must be valid, unique and chronological. A work or busy window may end at `24:00`.
 - `parsePastedTasks(text, days, {existingIds} = {})` can deconflict IDs against the current plan. Calendar windows round outward to half-hour boundaries to avoid making an overlapping slot available.
+
+## Week navigation and feedback
+
+- `rollingDays(anchorDate, weeklyWorkWindows)` from `weeks.mjs` creates 35 chronological days beginning on the Monday of the anchor week. Template entries are work-window arrays indexed by Sunday = 0. `weekView(days, weekIndex)` returns dates and indices for rendering. `rebasePlan(days, tasks, newDays)` reindexes active deadlines by date and retains busy windows on overlapping dates. It throws when a required date falls outside the new window.
+- `weeklyComparison(schedule, dayIndices)` returns the same total-hours shape as `weeklyCheck` for selected days and tasks due on those days. Use `weeklyCheck` for the entire loaded plan.
+- `plannedSleepMinutes(sleep)` gives the protected opportunity. `buildEstimateProfiles(feedback)` derives all seven profiles in the supplied record order. `sevenDayReview({feedback, sleepReports, appliedChanges, tasks, days, throughDate})` returns the inclusive seven-day estimates, deadline outcomes, adjustments, sleep comparison and neutral summary. Completion records may snapshot `title`, `targetDate`, and `hardDate` so later edits preserve the recorded outcomes. `campusDate(timestamp)` accepts a campus-local ISO timestamp or an ISO timestamp with an explicit offset.
+- A scope-reduction action consumes the stated one-time reduction allowance. A fresh scope allowance requires a new explicit edit to the task. The preview and applied task shapes agree.
+- The placeholder stores a `the25thhour.v1` snapshot through `src/ui/storage.mjs`. Keep the schema or supply a migration if the replacement UI needs a different persisted shape. Persist approval decisions keyed to the action and the plan it was verified against, and pass only approved action IDs to `applyRepair`.
