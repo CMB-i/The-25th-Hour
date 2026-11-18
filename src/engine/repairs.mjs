@@ -1,7 +1,12 @@
-import { evaluate } from './evaluate.mjs';
-const clone = tasks => tasks.map(t=>({...t}));
-const engineDayName=(days,i)=>new Date(`${days[i].date}T12:00:00`).toLocaleDateString('en-US',{weekday:'long'});
+import { evaluatePrepared, prepareEvaluation, verdictText } from './evaluate.mjs';
+import { lexical, weekdayName } from './dates.mjs';
+import { validateTasks } from './scheduler.mjs';
+
+const rank = {infeasible: 0, 'at-risk': 1, feasible: 2};
+const engineDayName = (days, index) => weekdayName(days[index].date);
+
 export function actionIdeas(tasks,days){
+  validateTasks(tasks, days);
   const ideas=[];
   for(const t of tasks){
     if(t.removed)continue;
@@ -19,45 +24,89 @@ export function actionIdeas(tasks,days){
   }
   return ideas;
 }
-export function applyAction(tasks, action){
+function simulateAction(tasks, action){
   return tasks.map(t=>{
     if(t.id!==action.taskId)return {...t};
     if(action.type==='move')return {...t,targetDay:action.toDay};
     if(action.type==='extend')return {...t,targetDay:action.toDay,hardDay:action.toDay};
     if(action.type==='drop')return {...t,removed:true};
-    if(action.type==='reduce')return {...t,min:Math.max(0,t.min-action.amount),likely:Math.max(0,t.likely-action.amount),max:Math.max(0,t.max-action.amount)};
+    if(action.type==='reduce')return {...t,min:Math.max(0,t.min-action.amount),likely:Math.max(0,t.likely-action.amount),max:Math.max(0,t.max-action.amount),reduceBy:0};
     throw Error('Unknown action');
   });
 }
-export function findRepairs(tasks,days,options={}){
-  const base=evaluate(tasks,days,options);
-  if(base.typical.feasible&&base.verdict==='feasible')return [];
-  const ideas=actionIdeas(tasks,days), repairs=[];
-  // Explore one action and, if needed, two independent actions. We explicitly
-  // promise smallest *examined* change, not a globally optimal schedule.
-  const trials=ideas.map(a=>[a]);
-  for(let i=0;i<ideas.length;i++)for(let j=i+1;j<ideas.length;j++) {
-    if(ideas[i].taskId!==ideas[j].taskId)trials.push([ideas[i],ideas[j]]);
+export function applyAction(tasks, action, {approved = false} = {}) {
+  const task = tasks.find(t => t.id === action.taskId && !t.removed);
+  if (!task) throw Error('Repair task is no longer active.');
+  const {type, toDay, amount} = action;
+  if ((type === 'move' && (!task.flexible || !Number.isInteger(toDay) || toDay <= task.targetDay || toDay > task.hardDay)) ||
+      (type === 'extend' && (!task.canRequestExtension || toDay !== task.hardDay + 1)) ||
+      (type === 'drop' && !task.allowDrop) ||
+      (type === 'reduce' && (!(amount > 0) || amount !== task.reduceBy))) {
+    throw Error('This action is no longer allowed.');
   }
-  for(const actions of trials){
-    let updated=clone(tasks);
-    for(const a of actions)updated=applyAction(updated,a);
-    const test=evaluate(updated,days,options);
-    if(!test.typical.feasible)continue;
-    const needsApproval=actions.some(x=>x.needsApproval);
-    const dropped=actions.filter(a=>a.type==='drop').length;
-    const reduction=actions.filter(a=>a.type==='reduce').reduce((s,a)=>s+a.amount,0);
-    const risk=test.verdict==='at-risk';
-    const score=actions.length*100 + (needsApproval?55:0) + dropped*40 + reduction*15 + actions.reduce((s,a)=>s+a.disruption,0)*5 + (risk?8:0);
-    repairs.push({id:actions.map(x=>x.id).join('+'),actions,updated,test,needsApproval,score});
-  }
-  return repairs.sort((a,b)=>a.score-b.score||a.id.localeCompare(b.id)).slice(0,10);
+  const needsApproval = type === 'extend' || (type === 'reduce' && task.reductionNeedsApproval);
+  if ((needsApproval || action.needsApproval) && approved !== true) throw Error('Record explicit approval before applying this action.');
+  return simulateAction(tasks, action);
 }
-export function draftApprovalRequest(repair,days){
-  const a=repair.actions.find(x=>x.needsApproval);
-  if(!a)return '';
-  const target=days[a.toDay]?.date;
-  if(a.type==='extend')return `Subject: Request to adjust ${repair.updated.find(t=>t.id===a.taskId)?.title} deadline\n\nHello,\n\nI am managing several overlapping academic commitments this week and would like to ask whether the deadline for ${repair.updated.find(t=>t.id===a.taskId)?.title} could be moved to ${target}. I understand the current deadline remains in effect unless this is approved. Please let me know if an extension is possible.\n\nThank you.`;
-  if(a.type==='reduce')return `Hello, could we discuss reducing the scope of ${repair.updated.find(t=>t.id===a.taskId)?.title} by ${a.amount} hours' worth of optional work? I will keep the current scope until we agree on a change.`;
-  return '';
+
+export function findRepairs(tasks, days, options = {}) {
+  const ideas = actionIdeas(tasks, days);
+  const context = prepareEvaluation(days, options);
+  const base = evaluatePrepared(tasks, context, false);
+  if (base === 'feasible') return [];
+  const accepted = [];
+  const singles = new Map();
+  function verify(actions) {
+    const updated = actions.reduce(simulateAction, tasks);
+    const verdict = evaluatePrepared(updated, context, false);
+    if (rank[verdict] <= rank[base]) return;
+    if (actions.length === 1) singles.set(actions[0].id, verdict);
+    else if (actions.some(action => rank[singles.get(action.id)] >= rank[verdict])) return;
+
+    const needsApproval = actions.some(action => action.needsApproval);
+    const drops = actions.filter(action => action.type === 'drop').length;
+    const reducedHours = actions.reduce((sum, action) => sum + (action.type === 'reduce' ? action.amount : 0), 0);
+    const disruption = actions.reduce((sum, action) => sum + action.disruption, 0);
+    const score = 100 * actions.length + 55 * Number(needsApproval) + 40 * drops +
+      15 * reducedHours + 5 * disruption + 8 * Number(verdict === 'at-risk');
+    const id = actions.map(action => action.id).join('+');
+    accepted.push({id, actions, updated, needsApproval, score});
+  }
+
+  for (const action of ideas) verify([action]);
+  for (let i = 0; i < ideas.length; i++) {
+    for (let j = i + 1; j < ideas.length; j++) {
+      if (ideas[i].taskId === ideas[j].taskId || [ideas[i], ideas[j]].some(action => singles.get(action.id) === 'feasible')) continue;
+      verify([ideas[i], ideas[j]]);
+    }
+  }
+  return accepted.sort((a, b) => a.score - b.score || lexical(a.id, b.id)).slice(0, 10)
+    .map(repair => ({...repair, test: evaluatePrepared(repair.updated, context)}));
+}
+
+export function applyRepair(tasks, days, repairId, {approvedActionIds = [], ...options} = {}) {
+  const repair = findRepairs(tasks, days, options).find(candidate => candidate.id === repairId);
+  if (!repair) throw Error('This repair is no longer available. Preview the current plan again.');
+  return repair.actions.reduce((list, action) =>
+    applyAction(list, action, {approved: approvedActionIds.includes(action.id)}), tasks);
+}
+
+export function emptyRepairMessage(verdict) {
+  return {
+    feasible: 'No change needed',
+    'at-risk': 'No further verified change. Keep your buffer.',
+    infeasible: "No verified fix with the changes you've allowed. This is a capacity problem, not a scheduling problem."
+  }[verdict];
+}
+
+export function draftApprovalRequest(repair, days, {includeWorkload = false} = {}) {
+  const drafts = repair.actions.filter(action => action.needsApproval).map(action => {
+    const title = repair.updated.find(task => task.id === action.taskId)?.title;
+    const workload = includeWorkload ? `\n\nPlan after the proposed change: ${verdictText(repair.test, days)}` : '';
+    if (action.type === 'extend') {
+      return `Subject: Request to adjust ${title} deadline\n\nHello,\n\nCould the deadline for ${title} move to ${days[action.toDay].date}? The current deadline stays in effect until you approve the change.${workload}\n\nThank you.`;
+    }
+    return `Hello, could we discuss reducing the scope of ${title} by ${action.amount}h of optional work? The current scope stays in effect until we agree.${workload}`;
+  });
+  return drafts.join('\n\n');
 }

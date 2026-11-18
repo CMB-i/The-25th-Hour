@@ -37,7 +37,7 @@ test('T4 scenario A misses by two hours', () => {
 test('T5 scenario A repair order and margins', () => {
   const {tasks, days, options} = run();
   const repairs = findRepairs(tasks, days, options);
-  assert.deepEqual(repairs.map(r => r.score), [113,165,270]); // M0 legacy; B2 fixed in M1
+  assert.deepEqual(repairs.map(r => r.score), [113,165]);
   assert.deepEqual(repairs.slice(0,2).map(r => [r.id,r.test.verdict,r.needsApproval,
     margin(r.test.typical,3),margin(r.test.conservative,3)]),
     [['move:poster:4','at-risk',false,1,0],['drop:research','feasible',false,3,3]]);
@@ -53,7 +53,7 @@ test('T7 scenario B repair order', () => {
   const {tasks, days, options, evaluation} = run(true);
   assert.equal(evaluation.verdict,'infeasible');
   const repairs = findRepairs(tasks, days, options);
-  assert.deepEqual(repairs.map(r => r.score), [165,173,330]); // M0 legacy; B2 fixed in M1
+  assert.deepEqual(repairs.map(r => r.score), [165,173]);
   assert.deepEqual(repairs.slice(0,2).map(r => [r.id,r.test.verdict,r.needsApproval]),
     [['drop:research','feasible',false],['extend:poster:4','at-risk',true]]);
   assert.equal(margin(repairs[1].test.typical,3),1);
