@@ -1,0 +1,2258 @@
+The 25th Hour — Build Specification
+
+Nov 13, 2026 · @Someone
+1. How to use this document
+
+This document is the single source of truth for what the team builds; where it disagrees with the existing prototype code, this document wins, unless an item is marked DECISION PENDING.
+
+Humans: read sections 2 to 4 for context, then sections 11 and 16 to see what to do first.
+
+LLM coding assistants: paste the whole document into the context, then work on one milestone at a time (section 16). Follow these rules:
+
+    Do not add features outside section 4. If a feature seems missing, propose it as a question instead of building it.
+
+    Keep the scheduling engine a pure, deterministic JavaScript module: no DOM, no network calls, no randomness, no LLM calls inside the engine.
+
+    Before changing any scoring constant, classification rule or default, update the matching golden test in section 10 first, then the code.
+
+    After every change, run node --test and report which numbered acceptance tests (T1, T2, ...) pass or fail.
+
+    If something is ambiguous, list the ambiguity and propose the smallest reasonable option. Do not invent product behavior.
+
+    Never let any code path apply a change that needs someone else's approval (professor, teammate) as if it were granted. See section 13.
+
+    Never place work in the protected sleep window. See section 13.
+
+Conventions used below
+
+Label
+	
+
+Meaning
+
+[EXISTS]
+	
+
+Already works in the current prototype (single HTML file with an embedded engine)
+
+[FIX]
+	
+
+Exists but is wrong; fix as described in section 11
+
+[NEW]
+	
+
+Must be built
+
+DECISION PENDING
+	
+
+Team must choose; see section 15. A recommended default is given
+
+F1, F2, F3
+	
+
+Features: Commitment Check, Rescue Engine, Reality Feedback
+
+T1, T2, ...
+	
+
+Acceptance tests (section 12)
+
+B1, B2, ...
+	
+
+Known bugs (section 11)
+
+D1, D2, ...
+	
+
+Open decisions (section 15)
+
+Units: durations are in hours in half-hour steps (0.5, 1, 1.5, ...) at the interface and in minutes (integers, multiples of 30) inside the engine. Days are indexed 0 to 4 for the demo week Monday 16 Nov to Friday 20 Nov 2026. All times are local campus time (Asia/Kolkata).
+2. Product in one page
+
+The 25th Hour is a commitment decision-support tool that tells a student what their next "yes" will cost, and the smallest change that makes it fit, while protecting sleep as a hard scheduling constraint.
+
+Tagline: Know what your next yes will cost.
+
+Problem. University students take on coursework, clubs, research and internships without checking whether the hours exist before each deadline. A weekly hours total can look fine (18h of work in 20h of time) while a deadline is already impossible (15h due by Thursday, 13h available by Thursday). Sleep is the first thing sacrificed.
+
+Core insight. Warnings alone do not change behavior; students already know they are busy. The product must act at the moment of decision ("should I say yes?") and, when the schedule is infeasible, show the least disruptive verified fix.
+
+The loop: Decide (F1 Commitment Check) → Adjust (F2 Rescue Engine) → Learn (F3 Reality Feedback).
+
+Design principles (non-negotiable)
+
+    Be honest: if a schedule is impossible, say so. Never pretend rescheduling creates hours.
+
+    Sleep is protected by default; the student can still override, and an override leaves the conflict visible.
+
+    Student autonomy: recommend and explain, never force.
+
+    Minimal effort: a check needs name, hours, deadline and one priority tag. Setup is a one-time import.
+
+    No guilt mechanics: no streaks, leaderboards, or penalties for sleeping less than planned.
+
+    Verified, not guessed: every suggested change is re-run through the scheduler before it is shown.
+
+    Privacy: data stays on the student's device in the MVP. Professors and teammates need no accounts; requests go out as ordinary messages the student sends.
+
+What this product is not: a sleep tracker, a gamified rewards app, a chatbot, a generic calendar, a medical or anxiety/insomnia treatment, or a surveillance tool for universities.
+
+What is unproven (do not claim these in the demo): that students act on the suggestions, that sleep improves, that this beats existing schedulers in real use, and that universities will pay. The prototype proves only the technical claim: a deadline-aware engine catches a conflict that a weekly total misses and finds a verified fix.
+3. Current state of the prototype
+
+A working single-file prototype (The_25th_Hour_Prototype.html, about 500 lines, vanilla JavaScript, no dependencies) already implements the scheduling engine and a two-scenario demo; it is missing Reality Feedback (F3), free-form commitment entry, and has nine known defects.
+
+The engine numbers below were reproduced by running the extracted engine code in Node on 13 Nov 2026. The earlier report of 13 automated tests in engine.test.mjs (in the ZIP) was not seen by the author of this document; run them and treat them as the starting test suite.
+
+What exists and was verified [EXISTS]
+
+Capability
+	
+
+Verified behavior
+
+Capacity from work windows minus sleep and busy slots
+	
+
+Demo week gives 20h total, 13h through Thursday
+
+Weekly-hours baseline
+	
+
+18h required against 20h available, reports "fits"
+
+Deadline-aware scheduler (earliest deadline first, 30-minute slots, preemptible)
+	
+
+Thursday margin at optimistic / typical / conservative estimates: -1h / -2h / -3h
+
+Three-estimate evaluation (optimistic, typical, conservative)
+	
+
+Flexible scenario verdict: infeasible
+
+Rescue Engine (try 1 to 2 changes, re-run scheduler, rank)
+	
+
+Flexible scenario: move poster target to Friday ranks first, leaves 1h typical slack, 0h conservative slack, verdict at-risk
+
+Approval separation
+	
+
+Fixed scenario: extension request is shown as pending; real plan unchanged until "simulate approved" is clicked
+
+Sleep protection
+	
+
+Zero allocations inside 23:00 to 07:00
+
+Imports
+	
+
+.ics (single events, Asia/Kolkata or UTC) and pasted task lines
+
+UI
+	
+
+Verdict card, three-way comparison, repair list and preview, timeline of 30-minute slots, estimate table
+
+What is missing [NEW]
+
+    F3 Reality Feedback: no actual-hours input, no estimate learning, no sleep report, no "did it work" view.
+
+    Free-form "new commitment" entry for the Commitment Check. Today the only proposal is one hard-coded research project with a slider.
+
+    More than one week of data; "Thursday" is hard-coded in several UI strings and lookups.
+
+    Local persistence (everything resets on reload).
+
+    Automated browser/UI test; the prototype has not been rendered in an automated check.
+
+What is wrong [FIX]: see section 11 (B1 to B9).
+4. Scope
+
+The MVP is three features plus imports, local storage and tests; everything else is out of scope until the complete Commitment Check → Rescue → Verification → Feedback flow works reliably.
+
+Must have (MVP)
+
+ID
+	
+
+Item
+	
+
+Status
+
+F1
+	
+
+Commitment Check with a real input form (name, hours range, deadline, priority tag, optional latest acceptable date) and a plain-language cost statement
+	
+
+[NEW] form, [EXISTS] engine
+
+F2
+	
+
+Rescue Engine: ranked, verified, minimal repairs; separates self-serve changes from approval-dependent requests; drafts request text
+	
+
+[EXISTS] + [FIX] B1 to B9
+
+F3
+	
+
+Reality Feedback: actual hours per task, estimate learning, optional one-tap sleep and stress report, "Did it work?" view
+	
+
+[NEW]
+
+I1
+	
+
+Import: .ics file and pasted deadline list, with a visible "last updated" time for the imported data
+	
+
+[EXISTS] + [FIX] B3, B7
+
+P1
+	
+
+First-run setup (sleep window, weekly available hours) and local persistence in the browser, with a "clear all my data" button
+	
+
+[NEW]
+
+Q1
+	
+
+Automated engine tests (Node) and one automated UI smoke test
+	
+
+[EXISTS] partial, extend
+
+Should have (only after all must-haves pass)
+
+    Week navigation (more than one week of data) and removal of the hard-coded Thursday.
+
+    Estimate templates by task type, editable by the student.
+
+    CSV export of feedback data for the pilot (section 14).
+
+    Accessibility pass: keyboard operation of every control, text alternatives for the timeline colors.
+
+Explicitly not building
+
+    Gaming-currency rewards ("sleep-to-earn"), payments, subscriptions.
+
+    Wearable or health-API integration, automatic sleep detection.
+
+    A chatbot or any LLM call at run time. The engine is deterministic.
+
+    Faculty or teammate portals, accounts, or sending messages automatically. The app only drafts text for the student to copy.
+
+    University analytics dashboards.
+
+    Streaks, leaderboards, social features, guilt-based notifications.
+
+    Full LMS integrations (Canvas, Moodle). .ics and pasted lists only.
+
+    Support for tasks that must be done in one uninterrupted block (the scheduler assumes work can be split into 30-minute pieces; fixed-length activities are entered as busy appointments).
+
+5. Domain model
+
+These shapes match the existing engine code; fields marked NEW are additions for F1 and F3. Keep the engine's inputs and outputs as plain JSON-serializable objects so they can be stored and tested.
+
+// ---------- Inputs ----------
+type HHMM = string;               // "16:00", 24h, same-day, minutes divisible by 30
+
+interface Day {
+  date: string;                   // "2026-11-16"
+  workWindows: [HHMM, HHMM][];    // when the student could work, e.g. [["16:00","20:00"]]
+  busyWindows: [HHMM, HHMM][];    // imported appointments; subtracted from work windows
+}
+
+interface Sleep { start: HHMM; end: HHMM }   // default 23:00 to 07:00; may wrap midnight
+
+type Priority = 1 | 2;            // 1 = must-keep (scheduled first on ties), 2 = flexible/droppable
+type TaskType = 'problem_set' | 'lab' | 'report' | 'reading' | 'project' | 'club' | 'other'; // NEW
+
+interface Task {
+  id: string;                     // unique
+  title: string;
+  type?: TaskType;                // NEW, used for estimate learning
+  min: number;                    // optimistic hours  (multiple of 0.5)
+  likely: number;                 // typical hours      (min <= likely <= max)
+  max: number;                    // conservative hours
+  targetDay: number;              // day index of the student's own (soft) target
+  hardDay: number;                // day index of the final (hard) limit; targetDay <= hardDay
+  earliestDay: number;            // day index work may start; <= hardDay
+  priority: Priority;
+  flexible: boolean;              // target may move up to hardDay without anyone's approval
+  allowDrop: boolean;             // task is genuinely optional (droppable)
+  splittable: boolean;            // MUST be true in the MVP (scheduler throws otherwise)
+  canRequestExtension?: boolean;  // hard limit could be asked to move by +1 day (needs approval)
+  reduceBy?: number;              // hours of scope that could be cut
+  reductionNeedsApproval?: boolean;
+  isProposal?: boolean;           // true while the student is still deciding whether to accept it
+  removed?: boolean;              // set when a drop action is applied
+}
+
+// ---------- Engine outputs ----------
+type Verdict = 'feasible' | 'at-risk' | 'infeasible';
+
+interface Alloc {                 // one 30-minute slot assigned to a task
+  date: string; dayIndex: number; start: number; end: number;   // minutes since midnight
+  label: string; taskId: string; taskTitle: string; minutes: number; late: boolean;
+}
+
+interface TaskResult {            // all durations in MINUTES
+  id: string; title: string; required: number; scheduled: number; missing: number;
+  late: number; shortByDeadline: number; dueDay: number;
+}
+
+interface DeadlineMargin { dayIndex: number; capacity: number; demand: number; margin: number } // minutes; margin = capacity - demand, cumulative up to that day
+
+interface ScheduleResult {
+  feasible: boolean;              // true iff every task finishes by its deadline (no misses)
+  lateMinutes: number; requiredMinutes: number; capacityMinutes: number;
+  alloc: Alloc[]; byDay: { date: string; index: number; capacity: number; assigned: Alloc[] }[];
+  taskResults: TaskResult[]; misses: TaskResult[]; deadlineMargins: DeadlineMargin[];
+}
+
+interface Evaluation {
+  verdict: Verdict; reason: string; minMargin: number;   // minMargin in minutes, at conservative estimates
+  optimistic: ScheduleResult; typical: ScheduleResult; conservative: ScheduleResult;
+}
+
+// ---------- Rescue Engine ----------
+type ActionType = 'move' | 'drop' | 'reduce' | 'extend';
+
+interface Action {
+  id: string;                     // e.g. "move:poster:4", "drop:research", "extend:poster:4"
+  taskId: string; type: ActionType;
+  toDay?: number;                 // move, extend
+  amount?: number;                // reduce, hours
+  needsApproval: boolean;         // true for extend, and reduce when reductionNeedsApproval
+  label: string; description: string;
+  impact: number;                 // minutes of work affected (informational)
+  disruption: number;             // move 1, extend 2, reduce 3, drop 5
+}
+
+interface Repair {
+  id: string;                     // action ids joined by "+"
+  actions: Action[];              // 1 or 2 actions on different tasks
+  updated: Task[];                // the tasks as they would be after the repair
+  test: Evaluation;               // the re-run evaluation of the updated tasks
+  needsApproval: boolean; score: number;     // lower score ranks first
+}
+
+// ---------- F3 Reality Feedback (NEW) ----------
+interface TaskFeedback {
+  taskId: string; type: TaskType; estimatedLikely: number; actualHours: number; // actualHours multiple of 0.5
+  recordedAt: string;             // ISO timestamp, local
+}
+
+interface SleepReport {           // optional, one tap, never required
+  date: string;                   // the night ending on this morning
+  hoursSlept: number;             // multiple of 0.5
+  stress?: 1 | 2 | 3 | 4 | 5;
+  plannedSleepMinutes: number;    // from the schedule at the time
+}
+
+interface EstimateProfile {       // per task type, learned from TaskFeedback
+  type: TaskType; samples: number; ratio: number;   // ratio = smoothed actual / estimated, clamped to [0.5, 3]
+}
+
+Validation rules (the engine throws a descriptive error otherwise)
+
+    Task ids are unique and non-empty; titles non-empty.
+
+    targetDay, hardDay, earliestDay are integers; 0 <= targetDay <= hardDay < number of days; 0 <= earliestDay <= hardDay.
+
+    0 <= min <= likely <= max, each a multiple of 0.5 hours.
+
+    Work windows are same-day and 30-minute aligned.
+
+    splittable must not be false in the MVP.
+
+Priority and tag mapping (UI to model)
+
+UI tag
+	
+
+priority
+	
+
+flexible
+	
+
+allowDrop
+
+must-keep
+	
+
+1
+	
+
+false
+	
+
+false
+
+flexible
+	
+
+2
+	
+
+true (and hardDay > targetDay; see D2)
+	
+
+false
+
+droppable
+	
+
+2
+	
+
+false
+	
+
+true
+6. Algorithms
+
+The engine is a deterministic pipeline: build capacity, schedule with earliest-deadline-first, classify at three estimate levels, then search for verified repairs. Everything below [EXISTS] unless marked [FIX] or [NEW].
+6.1 Build capacity (slots)
+
+for each day:
+  for each workWindow [begin, end):
+    for each 30-minute slot m in the window:
+      skip if the slot overlaps the sleep window (handle wrap-around, e.g. 23:00-07:00)
+      skip if it overlaps any busyWindow
+      skip if this exact slot was already added (overlapping windows)
+      add slot {date, dayIndex, start=m, end=m+30}
+sort slots by (dayIndex, start)
+
+Sleep is removed from capacity before anything else, so no code path can schedule work inside it.
+6.2 Deadline-aware scheduler
+
+Inputs: tasks, days, estimate in {optimistic, typical, conservative}, deadline in {target, hard}. Duration of a task = min, likely or max hours times 60. The deadline day of a task = targetDay or hardDay.
+
+remaining[task] = duration minutes
+for each slot in time order:
+  eligible = tasks with earliestDay <= slot.dayIndex and remaining > 0
+  if none: continue
+  pick = min(eligible) by (deadlineDay ASC, priority ASC, id ASC)     // earliest deadline first
+  used = min(30, remaining[pick]); remaining[pick] -= used
+  record alloc {slot, task: pick, minutes: used, late: slot.dayIndex > deadlineDay(pick)}
+for each task:
+  shortByDeadline = required - minutes allocated on or before its deadline day
+feasible = (no task has shortByDeadline > 0)
+
+Why EDF: for work that can be split into equal slots, with release days and deadlines, earliest-deadline-first finds a feasible schedule whenever one exists. This is what makes the feasibility claim trustworthy and is covered by a property test (T11). Tasks are always treated as splittable in the MVP.
+6.3 Deadline margins (explanation numbers)
+
+For every distinct deadline day D present in the task set:
+
+capacity(D) = total free minutes on days 0..D
+demand(D)   = sum of durations of tasks whose deadline day <= D
+margin(D)   = capacity(D) - demand(D)        // negative = shortfall at that deadline
+
+The binding day is the deadline day with the smallest margin. The interface must show the binding day's demand and capacity in words (for the demo: "Work due by Thursday: 15h. Time available by Thursday: 13h."). [FIX] B4.
+
+Note: margins ignore earliestDay; the scheduler is the source of truth for feasibility, margins only explain it.
+6.4 Classification
+
+Run the scheduler three times (optimistic, typical, conservative) against target deadlines.
+
+
+	
+
+Current code [EXISTS]
+	
+
+Recommended [FIX] B1, DECISION PENDING D1
+
+infeasible
+	
+
+optimistic estimate misses a deadline
+	
+
+typical estimate misses a deadline
+
+at-risk
+	
+
+optimistic fits but typical misses; or typical fits but conservative misses; or smallest conservative margin < 60 minutes
+	
+
+typical fits, and either conservative misses or smallest conservative margin < 60 minutes
+
+feasible
+	
+
+everything fits with at least 60 minutes of conservative slack at every deadline
+	
+
+same
+
+Why change it: under the current rule a plan whose typical estimate already misses a deadline can be labelled at-risk, and the interface then says it fits (B1). The recommended rule makes the label match what a student would expect. The flexible demo scenario is infeasible under both rules; the slider-at-4h case differs (section 10, T14).
+
+Every verdict carries a reason string; the interface must never say "fits" unless the typical estimate fits.
+6.5 Weekly-hours baseline (comparison only)
+
+weeklyCheck = (sum of likely hours x 60) <= (total free minutes in the whole week)
+
+This deliberately ignores deadlines. It exists only to show what a naive planner would conclude. Label it as a simulated baseline, not as any named product.
+6.6 Repair generation and ranking
+
+Candidate actions (actionIdeas), per non-removed task:
+
+Type
+	
+
+Offered when
+	
+
+Effect
+	
+
+Approval
+	
+
+Disruption
+
+move
+	
+
+flexible and targetDay < hardDay; once per day in targetDay+1 .. hardDay
+	
+
+sets targetDay
+	
+
+no
+	
+
+1
+
+extend
+	
+
+canRequestExtension and hardDay is not the last day
+	
+
+sets targetDay and hardDay to hardDay+1
+	
+
+yes
+	
+
+2
+
+reduce
+	
+
+reduceBy > 0
+	
+
+subtracts reduceBy hours from min, likely, max (floor 0)
+	
+
+only if reductionNeedsApproval
+	
+
+3
+
+drop
+	
+
+allowDrop
+	
+
+sets removed = true; label "Decline" if isProposal, else "Drop optional"
+	
+
+no
+	
+
+5
+
+Search:
+
+base = evaluate(tasks)
+if base.verdict == 'feasible': return []
+trials = every single action  +  every pair of actions on DIFFERENT tasks
+for each trial:
+  updated = apply(actions) on a CLONE of tasks        // never mutate the input
+  test = evaluate(updated)
+  accept only if test.typical.feasible                // current rule
+  [FIX B5] and rank(test.verdict) > rank(base.verdict) // must strictly improve; rank: infeasible 0, at-risk 1, feasible 2
+  score = 100*numActions + 55*(any needsApproval) + 40*numDrops + 15*hoursReduced
+          + 5*sum(disruption) + 8*(test.verdict == 'at-risk')
+sort by (score ASC, id ASC)
+[FIX B2] remove any repair whose action set is a strict superset of another accepted repair
+         whose verdict rank is >= its own
+return the first 10
+
+Expected outputs for the demo are in section 10. The claim to make in the product and the demo is "the smallest verified change among the candidates examined". Do not claim global optimality.
+6.7 Approval gate
+
+A repair with needsApproval = true is only a preview and a drafted message. The plan changes only when the student explicitly records that the other person agreed (in the demo: the button "Simulate approved request"). Preview functions must not mutate application state or the task list (test T13).
+7. Feature specs
+
+Each feature below states its trigger, inputs, behavior, outputs and edge cases; build them in the order F1, F2, F3 (section 16).
+7.1 F1 Commitment Check ("Should I say yes?")
+
+Purpose. Before a student accepts a new commitment, show what it would cost and what would have to change, in under ten seconds of effort.
+
+Inputs (form) [NEW]
+
+Field
+	
+
+Rules
+	
+
+Default
+
+Name
+	
+
+required, 1 to 80 characters
+	
+
+none
+
+Hours (typical)
+	
+
+required, multiple of 0.5, 0.5 to 40
+	
+
+none
+
+Range (low, high)
+	
+
+optional; must satisfy low <= typical <= high
+	
+
+see D3 (recommended: low = 0.8 x typical, high = 1.4 x typical, rounded to 0.5, low at least 0.5)
+
+Deadline date
+	
+
+required, must be a date in the loaded weeks
+	
+
+none
+
+Priority tag
+	
+
+must-keep, flexible or droppable
+	
+
+must-keep
+
+Latest acceptable date
+	
+
+shown only when tag = flexible; between deadline and last loaded day
+	
+
+see D2 (recommended: deadline + 1 day, capped at the last loaded day)
+
+Earliest start
+	
+
+optional
+	
+
+first day of the plan
+
+Task type
+	
+
+optional dropdown (TaskType), used by F3
+	
+
+other
+
+Behavior
+
+    On submit, create a task with isProposal = true (not yet part of the plan).
+
+    Evaluate twice: the plan without the proposal and with it. Show both verdicts side by side.
+
+    If the plan with the proposal is not feasible, call the Rescue Engine (F2) and show its top repair inline.
+
+    The student chooses one of: Accept (proposal joins the plan, isProposal = false), Accept with suggested change (applies a self-serve repair, then accepts), Accept anyway (override; see below), Not now (discard). Nothing is added to the plan until one of the accept options is chosen.
+
+    Accept anyway is always allowed. The conflict stays visible on the main screen as an unresolved banner until the student resolves it or the deadline passes. The app never blocks or scolds.
+
+Output: the cost statement (plain language, generated from numbers, no LLM)
+
+Without this:  Feasible. Tightest deadline: Tuesday, 3h to spare.
+With this:     Infeasible. Work due by Thursday: 15h. Time available by Thursday: 13h. Short by 2h.
+Tasks due by Thursday: DBMS Lab (4h), ML Assignment (3h), AUV Club Poster (3h), New Research Project (5h).
+Smallest verified fix: Move AUV Club Poster target to Friday (self-serve). Result: At risk, 1h spare.
+
+The numbers come from the binding deadline margin (section 6.3), not from the weekly total. Never blame a single task for a shortfall that comes from several tasks sharing a deadline (B4).
+
+Edge cases: deadline already passed; zero free time before the deadline; two proposals pending at once (evaluate them separately and also together, label clearly); imported data older than the freshness limit (section 8).
+7.2 F2 Rescue Engine ("Make it work")
+
+Purpose. When the plan is infeasible or at risk, list the few smallest verified changes, ranked, and separate what the student can do alone from what needs another person.
+
+Behavior
+
+    Algorithm: section 6.6, including fixes B2 and B5. Show at most 5 repairs in the interface (engine returns up to 10).
+
+    Every repair card shows: the change in one sentence; number of changes; badge Self-serve or Needs approval (pending); the verdict after the change; the binding-day margin after the change; a preview of the repaired timeline.
+
+    Self-serve repair: button "Apply". On apply, store the change, recompute, and show a confirmation with the new verdict. Allow "Undo" for the last applied change.
+
+    Approval repair: buttons "Copy request text" and, once the student has heard back, "Mark approved" or "Mark declined". Until marked approved, the real plan, deadlines and verdict do not change. The preview is labelled "If approved".
+
+    Request text templates (plain text, copy to clipboard, never sent by the app):
+
+        Extension: states the task, the proposed new date, that the current deadline stays in effect until approved, and a thank-you. Include the student's own numbers only if the student ticks "include my workload summary".
+
+        Scope reduction: states the task, the hours of optional work proposed to cut, and that current scope stays until agreed.
+
+    If no verified repair exists, say so plainly: "No verified fix with the changes you've allowed. This is a capacity problem, not a scheduling problem." and suggest the student mark something droppable or flexible. Do not invent options.
+
+    Never describe a repair as solving the conflict unless the re-run shows typical.feasible = true.
+
+7.3 F3 Reality Feedback ("Did it work?") [NEW]
+
+Purpose. Close the loop: make estimates more accurate over time and check whether the plan actually protected sleep, with almost no effort from the student.
+
+Task feedback
+
+    When a task's target day passes, or the student marks it done, ask once: "How long did it actually take?" with a stepper preset to the typical estimate. One tap on "As planned" confirms. Value is a multiple of 0.5 hours.
+
+    Store a TaskFeedback record. recordedAt is the completion time and may be edited by the student.
+
+Estimate learning
+
+ratio_n = 0.6 * ratio_(n-1) + 0.4 * (actualHours / estimatedLikely)     // per TaskType, ratio_0 = 1
+ratio is clamped to [0.5, 3]
+samples < 3  -> do not change any estimates; show "learning (1 of 3)"
+samples >= 3 -> when the student enters a new task of that type, show the adjusted estimate
+                 next to their own: "You said 4h. Your last 3 problem sets took 1.4x your estimate. Use 5.5h?"
+                 The student's number is kept unless they tap the suggestion. Round to 0.5h.
+
+Never change a student's entered estimate silently. Always show where an adjusted number came from.
+
+Sleep and stress report (optional)
+
+    One optional prompt per morning: hours slept (stepper in 0.5h steps) and optional stress 1 to 5. Skippable without consequence. At most one prompt per day. No streaks, badges, or reminders beyond that single in-app prompt.
+
+    plannedSleepMinutes is the length of the protected sleep window at the time of the plan (8h for 23:00 to 07:00).
+
+"Did it work?" view (one screen, for the last 7 days)
+
+    Adjustments applied (what changed, self-serve or approved, date).
+
+    Deadlines: met or missed per task (based on completion time vs target and hard day).
+
+    Estimate vs actual per task, with the learned ratio per type.
+
+    Reported sleep vs planned sleep opportunity per night, only for nights the student reported.
+
+    One neutral sentence, e.g. "Your plan kept your sleep window free on 5 of 5 days. You reported 6.5h on average on the 4 nights you logged." Always followed by: "A feasible plan makes room to sleep; it can't guarantee sleep."
+
+No scores, no ranking, no comparison with other students.
+8. Screens, copy and UI rules
+
+The interface has four screens plus settings, and every screen renders from one state object so that results are always consistent with the engine.
+
+Screen
+	
+
+Contains
+	
+
+Status
+
+My Week
+	
+
+Timeline of 30-minute slots per day with booked/available hours; commitments list with priority tags; freshness line; buttons "Check a new commitment" and "Import"; banners for unresolved conflicts
+	
+
+[EXISTS] partial
+
+Should I say yes? (F1)
+	
+
+The form, with-and-without verdicts, cost statement, top repair, accept options
+	
+
+[NEW] form
+
+Make it work (F2)
+	
+
+Ranked repairs, preview timeline, apply / copy request / mark approved
+	
+
+[EXISTS] + [FIX]
+
+Did it work? (F3)
+	
+
+The seven-day review described in 7.3
+	
+
+[NEW]
+
+Settings and first-run setup
+	
+
+Sleep window; weekly template of available work hours; calendar import; task-type estimate table; clear-all-data; optional CSV export
+	
+
+[NEW]
+
+First-run setup should take about two minutes: (1) confirm the protected sleep window (default 23:00 to 07:00), (2) set the usual available work hours for each weekday, (3) optionally import a calendar .ics or paste deadlines. Nothing else is asked.
+Verdict wording (copy is part of the spec)
+
+Verdict
+	
+
+Headline
+	
+
+Body (fill the brackets from engine numbers)
+
+feasible
+	
+
+This fits your week.
+	
+
+Every deadline is met even if tasks run long, with at least 1h to spare.
+
+at-risk
+	
+
+It fits, but there is almost no room for error.
+	
+
+Typical estimates fit. If tasks run long, [binding day] could be [x]h short. Shown only when the typical estimate fits (B1).
+
+infeasible
+	
+
+This plan can't meet its deadlines.
+	
+
+[Binding day]: [X]h of work due, [Y]h available. Short by [Z]h.
+
+Copy rules:
+
+    Plain, short sentences. Numbers always with units ("2h", "13h").
+
+    Say what changes and what it costs. Do not moralize about sleep; never write "you should sleep more".
+
+    No alarm styling. Use color together with a word or icon, never color alone.
+
+    The sleep window is described as "protected sleep time" and as an opportunity, never as a guarantee.
+
+    Anything that depends on another person is labelled "Needs approval" and "pending" until the student records the answer.
+
+    The weekly-hours comparison card is labelled "Weekly hours only (simulated baseline)"; the middle card is labelled "Deadline-aware scheduler (same allocation, no repair step)". Do not name or imply behavior of any real product ([FIX] B6).
+
+Freshness (important for trust)
+
+    Store two separate timestamps: calendarImportedAt (when imported data was loaded) and lastEditedAt (any change in the app). Show the first on the verdict card: "Based on your calendar from [time]." [FIX] B7.
+
+    If no calendar was imported, or the import is older than 24 hours, show a banner above the verdict: "Your calendar may be out of date. Re-import before relying on this." Do not block.
+
+Interaction and quality rules
+
+    Recompute the verdict on every input change; recomputation must finish within 100 ms for 5 weeks and 30 tasks.
+
+    Verdict region uses aria-live="polite" so screen readers announce changes.
+
+    Every control is keyboard operable; touch targets are at least 44 px; layout works from 360 px width.
+
+    Text contrast meets WCAG AA. Timeline slots have text alternatives (task, time, late or free) through title/aria-label.
+
+    Errors from the engine (invalid input) are shown as a plain message next to the offending field. A thrown error must never leave a blank screen.
+
+    All state changes go through one function that updates the state object and re-renders. No hidden global flags (the prototype's appliedActions, extraTasks, extraEvents arrays should become fields of that state object).
+
+    Keep the visual identity of the prototype (navy hero, teal accents, serif accent for the product name). It is not part of the engine.
+
+9. Imports
+
+Imports exist to remove typing; they must be strict, local-only, and honest about what they skipped. Both parsers must be pure functions that return { data, warnings } and never throw on bad user input.
+9.1 Pasted task list [EXISTS] + [FIX] B3
+
+One task per line, fields separated by |:
+
+Title | 3h | YYYY-MM-DD | must-keep|flexible|droppable | [optional latest date YYYY-MM-DD]
+Quiz revision | 2h | 2026-11-19 | must-keep
+Club report | 3h | 2026-11-18 | flexible | 2026-11-19
+
+Rule
+	
+
+Behavior
+
+Hours
+	
+
+number, optional trailing h, greater than 0, multiple of 0.5
+
+Date
+	
+
+must be a day in the loaded weeks, otherwise a line error
+
+Tag
+	
+
+defaults to must-keep; any other word is a line error
+
+Optional 5th column
+	
+
+latest acceptable date for a flexible task (hardDay). If omitted for a flexible task, use the D2 default
+
+Range
+	
+
+current code uses typical -0.5h / +0.5h; replace with the D3 rule
+
+Ids
+	
+
+import-<line>-<slug-of-title>; on collision append :2, :3, ...
+
+Errors
+	
+
+Report each bad line as Line N: <reason>; still add all valid lines; show counts ("Added 3, skipped 1")
+
+The tag must have its effect (B3): flexible sets flexible = true and hardDay > targetDay; droppable sets allowDrop = true; must-keep sets neither.
+9.2 Calendar file (.ics) [EXISTS] + extensions
+
+Supported today: VEVENT blocks with explicit DTSTART and DTEND as floating local time (20261116T170000), UTC (...Z, converted to Asia/Kolkata), or TZID=Asia/Kolkata. Line unfolding is handled. Each event becomes a busy window on its day and is subtracted from the available work windows only where they overlap.
+
+Skipped with a visible warning (never silently): recurring events (RRULE), all-day events, other time zones, events that cross midnight, events missing a start or end, and events with zero or negative length. Events outside the loaded weeks are currently ignored without a message [FIX]: show "N events outside the loaded weeks were ignored."
+
+Strongly recommended [NEW]: expand simple weekly recurrence (RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=... or COUNT, with INTERVAL and EXDATE) for the loaded weeks. A class timetable exported from Google Calendar or a university system is almost always recurring, so without this the "import your timetable" promise fails for real files. Unsupported recurrence patterns keep producing a warning.
+
+BEGIN:VEVENT
+DTSTART;TZID=Asia/Kolkata:20261117T170000
+DTEND;TZID=Asia/Kolkata:20261117T180000
+SUMMARY:Seminar
+END:VEVENT
+
+9.3 Security and privacy for imports
+
+    Files are read in the browser with File.text(); nothing is uploaded. State this next to the control.
+
+    Limit file size (recommended 1 MB) and event count (recommended 2,000); show a clear error beyond that.
+
+    Treat all imported text as untrusted: render it only as text (escape HTML; use textContent), never as markup, never eval.
+
+    Imported event titles are not stored after import unless needed for display; only start and end times affect the schedule.
+
+    Test fixtures for every case above live in the repo under tests/fixtures/ (section 12).
+
+10. Golden scenarios
+
+These scenarios fix the expected engine output exactly; every number below was reproduced by running the current engine (scenarios A to D, current-code columns) or derived by hand from the same rules (recommended-rule columns and scenarios E, F). Encode them as tests before changing code.
+
+Shared inputs. Protected sleep 23:00 to 07:00. Week Monday 16 Nov to Friday 20 Nov 2026 (day indices 0 to 4).
+
+Day
+	
+
+Index
+	
+
+Work window
+	
+
+Free hours
+	
+
+Cumulative
+
+Mon 16 Nov
+	
+
+0
+	
+
+16:00 to 20:00
+	
+
+4h
+	
+
+4h
+
+Tue 17 Nov
+	
+
+1
+	
+
+17:00 to 20:00
+	
+
+3h
+	
+
+7h
+
+Wed 18 Nov
+	
+
+2
+	
+
+16:00 to 19:00
+	
+
+3h
+	
+
+10h
+
+Thu 19 Nov
+	
+
+3
+	
+
+16:00 to 19:00
+	
+
+3h
+	
+
+13h
+
+Fri 20 Nov
+	
+
+4
+	
+
+13:00 to 20:00
+	
+
+7h
+	
+
+20h
+
+Task id
+	
+
+Hours (min / likely / max)
+	
+
+Target day
+	
+
+Hard day
+	
+
+Priority
+	
+
+Notes
+
+dbms DBMS Lab
+	
+
+4 / 4 / 4
+	
+
+Tue (1)
+	
+
+Tue (1)
+	
+
+1
+	
+
+must-keep
+
+ml ML Assignment
+	
+
+3 / 3 / 3
+	
+
+Thu (3)
+	
+
+Thu (3)
+	
+
+1
+	
+
+must-keep
+
+poster AUV Club Poster
+	
+
+3 / 3 / 3
+	
+
+Thu (3)
+	
+
+Fri (4) in scenario A; Thu (3) in B
+	
+
+2
+	
+
+A: flexible = true. B: flexible = false, canRequestExtension = true
+
+french French Homework
+	
+
+3 / 3 / 3
+	
+
+Fri (4)
+	
+
+Fri (4)
+	
+
+1
+	
+
+must-keep
+
+research New Research Project
+	
+
+4 / 5 / 6
+	
+
+Thu (3)
+	
+
+Thu (3)
+	
+
+2
+	
+
+isProposal = true, allowDrop = true
+Scenario A: flexible target (the main demo)
+
+Check
+	
+
+Expected
+
+Weekly baseline
+	
+
+required 18h, available 20h, fits
+
+Deadline margins at Thursday (optimistic / typical / conservative)
+	
+
+-1h / -2h / -3h (cumulative: 13h available; 14h / 15h / 16h due)
+
+Margins at Tuesday and Friday (typical)
+	
+
+Tuesday +3h; Friday +2h
+
+Verdict
+	
+
+infeasible (both the current and the recommended rule)
+
+Repair 1
+	
+
+"Move AUV Club Poster target to Friday"; self-serve; score 113; verdict after: at-risk; typical Thursday margin +1h; conservative Thursday margin 0h
+
+Repair 2
+	
+
+"Decline New Research Project"; self-serve; score 165; verdict after: feasible; Thursday margin +3h at all three estimates
+
+Repairs after fix B2
+	
+
+exactly these two (the combination "move + decline", score 270, must not appear)
+
+After applying Repair 1
+	
+
+verdict at-risk; the engine offers exactly one further repair, "Decline New Research Project" (feasible)
+
+Total shortfall at typical estimates
+	
+
+2h (120 minutes) at the Thursday deadline
+Scenario B: all deadlines fixed
+
+Same tasks; poster.hardDay = 3, flexible = false, canRequestExtension = true.
+
+Check
+	
+
+Expected
+
+Verdict
+	
+
+infeasible (same margins as A)
+
+Repair 1
+	
+
+"Decline New Research Project"; self-serve; score 165; verdict after: feasible
+
+Repair 2
+	
+
+"Request AUV Club Poster deadline on Friday"; needs approval; score 173; verdict after (if approved): at-risk; typical Thursday margin +1h; conservative 0h
+
+Repairs after fix B2
+	
+
+exactly these two (the pair, score 330, must not appear)
+
+Approval gate
+	
+
+before "Mark approved", the evaluated plan has poster.hardDay = 3 and the verdict is still infeasible
+Scenario C: research estimate sweep (scenario A, no repair applied)
+
+The slider sets the typical hours L; the range is L-1 to L+1. Thursday margin at typical estimates = 13h - (10h + L).
+
+Typical L
+	
+
+Range
+	
+
+Typical Thursday margin
+	
+
+Verdict, current code
+	
+
+Verdict, recommended rule (D1)
+
+4h
+	
+
+3 to 5h
+	
+
+-1h
+	
+
+at-risk (shows "fits" text: bug B1)
+	
+
+infeasible
+
+4.5h
+	
+
+3.5 to 5.5h
+	
+
+-1.5h
+	
+
+infeasible
+	
+
+infeasible
+
+5h
+	
+
+4 to 6h
+	
+
+-2h
+	
+
+infeasible
+	
+
+infeasible
+
+5.5h
+	
+
+4.5 to 6.5h
+	
+
+-2.5h
+	
+
+infeasible
+	
+
+infeasible
+
+6h
+	
+
+5 to 7h
+	
+
+-3h
+	
+
+infeasible
+	
+
+infeasible
+Scenario D: research toggled off
+
+Check
+	
+
+Expected
+
+Weekly baseline
+	
+
+13h of 20h, fits
+
+Margins (typical)
+	
+
+Tuesday +3h, Thursday +3h, Friday +7h
+
+Verdict
+	
+
+feasible; repairs list empty; the interface says "No change needed"
+Scenario E: sleep protection
+
+Input
+	
+
+Expected free time
+
+Work window 21:00 to 23:30 on one day
+	
+
+2h (slots 21:00 to 23:00 only; the 23:00 to 23:30 slot is inside the sleep window)
+
+Work window 05:00 to 08:00 on one day
+	
+
+1h (slots 07:00 to 08:00 only)
+
+Sleep window set to 00:00 to 08:00 and work window 22:00 to 23:30
+	
+
+1.5h (no overlap with sleep)
+Scenario F: no verified fix exists [FIX] B9
+
+Scenario B with research.allowDrop = false and poster.canRequestExtension = false. Expected: verdict infeasible; findRepairs returns an empty list; the interface shows the capacity-problem message from 7.2 and must not say "No adjustment needed".
+11. Known bugs to fix first
+
+Nine defects were found in the prototype; B1, B2, B3 and B9's trigger condition were reproduced by running the engine, the others were found by reading the code. Fix B1, B9, B4 and B2 before anything else because they appear in the live demo.
+
+ID
+	
+
+Defect
+	
+
+How to reproduce
+	
+
+Fix
+	
+
+Test
+
+B1
+	
+
+The at-risk headline says "It fits" even when the typical estimate misses a deadline
+	
+
+Scenario A, research slider at 4h: typical Thursday margin is -1h but the headline reads "It fits, but there's almost no room for error." Cause: the classifier calls a typical miss "at-risk" and the text assumes typical fits
+	
+
+Adopt the D1 classification (6.4) and the copy rules in section 8; at-risk text may only appear when typical.feasible
+	
+
+T14, T15
+
+B2
+	
+
+Redundant repairs are listed, which contradicts "smallest verified change"
+	
+
+Scenario A: option 3 is "Move poster + Decline research", a combination of options 1 and 2
+	
+
+Prune any repair whose action set is a strict superset of an accepted repair with an equal or better verdict (6.6)
+	
+
+T8
+
+B3
+	
+
+The flexible tag on pasted tasks has no effect
+	
+
+Paste Quiz revision | 2h | 2026-11-19 | flexible: the task gets flexible = false and hardDay == targetDay, so the Rescue Engine can never move it
+	
+
+Implement 9.1 and the tag mapping in section 5
+	
+
+T16
+
+B4
+	
+
+The verdict does not show the number that matters, and Thursday is hard-coded
+	
+
+renderVerdict computes the Thursday deficit but never displays it (unused variable); dayIndex === 3 is hard-coded in three places; the shortfall is blamed on one task ("New Research Project: 2h late") only because the tie-break orders poster before research
+	
+
+Compute the binding day from deadlineMargins (smallest margin); show demand, available and short-by for that day; list the tasks due by that day; remove all hard-coded day indices
+	
+
+T15, T21
+
+B5
+	
+
+A repair is accepted if the typical estimate fits, even if it does not improve the verdict
+	
+
+By reading findRepairs: when the base verdict is at-risk, any action that keeps the verdict at-risk is accepted and can rank first
+	
+
+Require rank(test.verdict) > rank(base.verdict) (6.6)
+	
+
+T12
+
+B6
+	
+
+Comparison card labels over-claim
+	
+
+The middle card says "Deadline scheduler" but is the same function as the Rescue Engine's allocation
+	
+
+Relabel per section 8; never imply how Motion, Reclaim or any real product behaves
+	
+
+T21
+
+B7
+	
+
+"Last updated" shows the last click, not the freshness of the calendar data
+	
+
+Any scenario toggle calls touch(), which resets the label
+	
+
+Two timestamps and a 24-hour stale banner (section 8)
+	
+
+T21
+
+B8
+	
+
+The reduce action is never exercised
+	
+
+No demo task sets reduceBy, so scope-reduction repairs and their request text never appear
+	
+
+Add a unit-test fixture with reduceBy = 2 and reductionNeedsApproval = true; check the repair is flagged as needing approval and the draft text mentions that current scope stays until agreed
+	
+
+T20
+
+B9
+	
+
+With no repairs, the interface says "No adjustment needed" even when the plan is infeasible
+	
+
+Scenario F: renderRepairs shows that message whenever the list is empty
+	
+
+Three cases: feasible "No change needed"; at-risk with no improving repair "No further verified change. Keep your buffer."; infeasible "No verified fix with the changes you've allowed. This is a capacity problem, not a scheduling problem."
+	
+
+T21
+12. Test plan and acceptance criteria
+
+The product is accepted when tests T1 to T20 pass under node --test and T21 to T24 pass in a browser test; each test below is a required acceptance criterion. Engine tests use node:test with no dependencies, live in tests/, and read fixtures from tests/fixtures/.
+
+ID
+	
+
+Checks
+	
+
+Expected
+
+T1
+	
+
+Capacity of the shared inputs (section 10)
+	
+
+Free hours per day 4, 3, 3, 3, 7; cumulative 4, 7, 10, 13, 20
+
+T2
+	
+
+Weekly baseline
+	
+
+Scenario A: 18h of 20h, fits. Scenario D: 13h of 20h, fits
+
+T3
+	
+
+Deadline margins, scenario A
+	
+
+Tuesday +3h in all estimates. Thursday -1h / -2h / -3h (optimistic / typical / conservative). Friday +3h / +2h / +1h
+
+T4
+	
+
+Classification, scenario A
+	
+
+infeasible
+
+T5
+	
+
+Repairs, scenario A
+	
+
+Exactly two: move poster (score 113, at-risk, Thursday typical +1h, conservative 0h), decline research (score 165, feasible, Thursday +3h)
+
+T6
+	
+
+Re-run after applying repair 1
+	
+
+Verdict at-risk; exactly one further repair: decline research (feasible)
+
+T7
+	
+
+Repairs, scenario B
+	
+
+Exactly two: decline research (165, feasible), extend poster to Friday (173, needs approval, at-risk)
+
+T8
+	
+
+No redundant repairs
+	
+
+Property: no returned repair has an action set that is a strict superset of another returned repair with an equal or better verdict. Run on scenarios A, B and 200 random task sets
+
+T9
+	
+
+Approval gate
+	
+
+Scenario B before "Mark approved": the evaluated plan still has poster.hardDay = 3 and verdict infeasible; after approval, hardDay = 4
+
+T10
+	
+
+Sleep is never used
+	
+
+Scenario E values (2h, 1h, 1.5h). Property: for random work windows and sleep windows (including ones that wrap midnight), no allocated slot overlaps sleep
+
+T11
+	
+
+Scheduler is exact
+	
+
+Property on small random instances (up to 3 days, 6 slots per day, 4 tasks, random release days and deadlines): the scheduler reports feasible exactly when an exhaustive search finds a feasible assignment
+
+T12
+	
+
+Repair validity
+	
+
+For every returned repair: re-evaluating updated reproduces test; rank(test.verdict) > rank(base.verdict); applying actions to the original tasks yields updated
+
+T13
+	
+
+No mutation
+	
+
+Deep-equal of input tasks and days before and after evaluate, findRepairs and the request-text generator
+
+T14
+	
+
+Estimate sweep
+	
+
+Scenario C table, using the rule chosen in D1 (default: recommended column)
+
+T15
+	
+
+Wording matches numbers
+	
+
+For every verdict and for the slider sweep: text containing "fits" or "almost no room" appears only if typical.feasible; the infeasible text names the binding day and its demand, available and short-by hours exactly as in deadlineMargins
+
+T16
+	
+
+Pasted tasks
+	
+
+flexible gives flexible = true and hardDay > targetDay; droppable gives allowDrop = true; bad lines produce Line N: reason, valid lines are still added; duplicate titles get unique ids
+
+T17
+	
+
+.ics import
+	
+
+Fixtures for: floating local time; UTC Z converted to Asia/Kolkata (e.g. 20261117T113000Z becomes 17:00); TZID=Asia/Kolkata; folded lines; warnings for all-day, other time zone, cross-midnight, zero-length, and (until implemented) recurring events; a count of events outside the loaded weeks; events reduce capacity only where they overlap a work window. If RRULE expansion is built, add weekly, BYDAY, UNTIL, COUNT, INTERVAL, EXDATE cases
+
+T18
+	
+
+Input validation
+	
+
+Each rule in section 5 produces a descriptive error; the interface shows it next to the field and never goes blank
+
+T19
+	
+
+Estimate learning
+	
+
+Three problem sets each estimated 4h and taking 6h give ratios 1.2, 1.32, 1.392; a new 4h problem set then shows the suggestion 5.5h and keeps the student's 4h unless accepted. With fewer than 3 samples, no suggestion. Ratio clamps to [0.5, 3]. Nothing changes silently
+
+T20
+	
+
+Reduce action
+	
+
+Fixture with reduceBy = 2, reductionNeedsApproval = true: repair is flagged as needing approval; min, likely, max drop by 2h (floor 0); request text says current scope stays until agreed
+
+T21
+	
+
+Interface states (browser)
+	
+
+Page loads with no console errors; both scenarios render; B4 binding-day numbers shown and no hard-coded Thursday; B6 labels; B7 two timestamps and 24-hour stale banner; B9 three empty-repair messages; the verdict region has aria-live; no horizontal scroll at 360 px; every control reachable by keyboard
+
+T22
+	
+
+Persistence
+	
+
+State (tasks, applied changes, feedback, settings) survives reload; "Clear all my data" removes everything including feedback
+
+T23
+	
+
+Untrusted input
+	
+
+A pasted title or .ics summary containing <img src=x onerror=alert(1)> is displayed as text and runs nothing; a file over the size limit is rejected with a message
+
+T24
+	
+
+Performance
+	
+
+5 weeks and 30 tasks: evaluate under 100 ms, findRepairs under 250 ms on a mid-range laptop
+
+How to run
+
+node --test                    # engine tests T1-T20
+npx playwright test            # browser tests T21-T24 (dev dependency only)
+
+Rule for changes: a pull request that changes a constant (score weights, 60-minute cushion, 30-minute slot, default ranges) must change the matching golden test in the same commit and explain why.
+13. Non-functional requirements and safety rules
+
+These rules are not optional: they protect the student's trust and keep the engine's claims honest.
+
+Safety rules (never break these)
+
+    Sleep is never used for work. The scheduler removes the protected sleep window before allocating. No repair may shrink the sleep window. The window changes only when the student edits it in Settings.
+
+    No silent changes to deadlines. A change that needs another person's approval never affects the evaluated plan until the student records that it was approved. The app never sends messages; it only drafts text to copy.
+
+    No false reassurance. The interface says "fits" only if the typical estimate fits, and never states or implies that a feasible plan guarantees sleep or lower stress.
+
+    No dark patterns. No streaks, scores, badges, countdown pressure, or guilt wording about sleep. At most one optional in-app prompt per day (the morning sleep report).
+
+    Override is always allowed. A student can accept a commitment the engine says is infeasible; the conflict stays visible, nothing is blocked or hidden.
+
+Privacy
+
+    All data stays on the student's device (browser storage under a versioned key such as the25thhour.v1). The page makes no network requests after it loads: no analytics, no third-party scripts, fonts or images. A browser test asserts this.
+
+    Provide "Clear all my data" in Settings. Optional CSV export is manual and initiated by the student.
+
+    Store the minimum: task fields, applied changes, feedback and sleep reports. Do not store imported event titles beyond what the screen needs.
+
+    Professors and teammates never see any student data unless the student copies a message to them. Copy only the numbers the student ticks.
+
+    Show this notice on first run: "This is a planning tool, not medical advice, and not a treatment for sleep or anxiety problems."
+
+Engineering
+
+    Determinism: the same inputs must give the same outputs. The engine must not call Date.now(), new Date() without an argument, Math.random(), or anything locale-dependent. Replace a.id.localeCompare(b.id) with a plain < / > comparison (locale-independent tie-break).
+
+    Time: the engine works on date strings (YYYY-MM-DD) and minutes since midnight, never on local-time Date objects. Time-zone conversion happens only in the importer, with explicit Asia/Kolkata handling, so results do not depend on the browser's time zone.
+
+    No runtime AI: no LLM or network calls in the product. LLM assistants may be used during development only.
+
+    Structure: engine is a pure ES module with no DOM access; the interface imports it and holds one state object (section 8). No global mutable variables outside that state.
+
+    Browsers: current Chrome, Edge, Firefox and Safari; no build step required to run; no runtime dependencies. Dev dependencies allowed: a test runner and Playwright.
+
+    Versioned storage: include a schemaVersion in stored data and a migration function; a version mismatch must never crash the page (fall back to a clean state and tell the student).
+
+    Errors: engine functions throw Error with a human-readable message for invalid inputs; the interface catches it and shows it beside the field.
+
+14. Validation pilot and metrics
+
+The prototype proves only the technical claim; whether students act on it, whether they sleep more, and whether anyone will pay must be tested with real students, and the pilot below is the minimum evidence plan.
+
+Hypotheses
+
+ID
+	
+
+Hypothesis
+	
+
+How tested
+	
+
+Status
+
+H0
+	
+
+A deadline-aware engine catches conflicts a weekly total misses and finds a verified fix
+	
+
+Golden scenarios (section 10), automated tests
+	
+
+Testable now
+
+H1
+	
+
+Students act on the suggested changes
+	
+
+Pilot: share of offered repairs that are applied or requested
+	
+
+Unproven
+
+H2
+	
+
+The Rescue Engine is more useful than a plain deadline scheduler or calendar
+	
+
+Pilot: ask participants to compare against what they use now; count repairs they adopt that they would not have found
+	
+
+Unproven
+
+H3
+	
+
+Students report more sleep and less stress when using it
+	
+
+Pilot: sleep diary and 1 to 5 stress rating, baseline week vs app week
+	
+
+Unproven; small sample, treat as preliminary
+
+H4
+	
+
+A university or student-support office would pilot or pay
+	
+
+Conversations with 1 to 2 staff; do not claim willingness to pay until stated
+	
+
+Unproven
+
+Before the app is finished (cheap, do now)
+
+    Interview 8 to 10 students. Ask: the last time you were overloaded, what did you do? What did you drop, move, or ask for? What would you have accepted from a tool at the moment you said yes?
+
+    Concierge test with 3 to 5 students: take their real deadlines, run the engine yourselves, hand them the verdict and top repairs, and note whether they act on them within a day.
+
+Pilot design (two weeks, voluntary, informed consent)
+
+    Week 1, baseline: participants log sleep hours each morning and a 1 to 5 stress rating; they use their normal planning.
+
+    Week 2, intervention: same logging, plus they run Commitment Check before accepting new commitments and use the Rescue Engine when flagged.
+
+    Participants can stop at any time; data export is manual and initiated by the participant; no names are stored in the app.
+
+Metrics
+
+Metric
+	
+
+Definition
+	
+
+Type
+
+Primary outcome
+	
+
+Median change in self-reported sleep hours between week 1 and week 2, per participant
+	
+
+Outcome
+
+Stress
+	
+
+Median daily stress rating, week 1 vs week 2
+	
+
+Outcome
+
+Conflicts resolved
+	
+
+Share of flagged conflicts (infeasible or at-risk) later resolved without using protected sleep time
+	
+
+Process
+
+Repair adoption
+	
+
+Repairs applied or requested, divided by repairs shown
+	
+
+Process
+
+Approval success
+	
+
+Requests marked approved, divided by requests marked sent
+	
+
+Process
+
+Infeasible accepts
+	
+
+Commitments accepted with "Accept anyway" while infeasible
+	
+
+Process
+
+Deadlines met
+	
+
+Tasks finished by their target and hard day
+	
+
+Outcome
+
+Estimate error
+	
+
+Actual hours divided by estimated typical hours, by task type
+	
+
+Accuracy
+
+Effort
+	
+
+Self-reported minutes per day spent in the app
+	
+
+Cost
+
+Reporting rules
+
+    Report counts and medians per participant; do not claim statistical significance with this sample size.
+
+    State that the study has no control group and that week 2 may differ for reasons unrelated to the app (exam timing, for example).
+
+    "Conflicts resolved" is a process metric and must never be presented as proof that sleep improved. Sleep change is its own, separate result.
+
+    A feasible schedule creates an opportunity to sleep; say so in every summary.
+
+15. Open decisions
+
+Each decision has a recommended default so work is never blocked; if the team has not decided by the milestone shown, build the default and note it in the pull request.
+
+ID
+	
+
+Question
+	
+
+Options
+	
+
+Recommended default
+	
+
+Needed by
+
+D1
+	
+
+How should a plan be classified when the typical estimate already misses a deadline?
+	
+
+(a) keep the current rule: infeasible only if the optimistic estimate misses. (b) infeasible if the typical estimate misses; at-risk only when typical fits
+	
+
+(b), so the label always matches the text (fixes B1)
+	
+
+M1
+
+D2
+	
+
+For a pasted or new task tagged flexible with no latest date, how far may its target move?
+	
+
+(a) one day, capped at the last loaded day. (b) to the end of the week. (c) require the student to enter a date
+	
+
+(a)
+	
+
+M2
+
+D3
+	
+
+How should the low and high estimates be set when the student gives only one number?
+	
+
+(a) typical -0.5h / +0.5h (current paste import). (b) typical x 0.8 and x 1.4, rounded to 0.5h, low at least 0.5h. (c) always ask for a range
+	
+
+(b); replaced by the learned ratio from F3 once there are 3 samples
+	
+
+M2
+
+D4
+	
+
+Where to persist data?
+	
+
+(a) localStorage. (b) IndexedDB
+	
+
+(a) for the MVP, behind a small storage wrapper so it can be swapped
+	
+
+M3
+
+D5
+	
+
+Single week or multiple weeks?
+	
+
+(a) fixed demo week plus pasted dates within it. (b) a rolling window of 5 weeks with week navigation
+	
+
+(b) if time allows after M4, otherwise (a) with the hard-coded Thursday removed
+	
+
+M5
+
+D6
+	
+
+Code structure
+	
+
+(a) keep a single HTML file. (b) split into src/engine/*.mjs, src/ui/*, tests/ with no build step
+	
+
+(b), so the engine can be tested in Node
+	
+
+M0
+
+D7
+	
+
+Expand weekly recurring events (RRULE) in the .ics import?
+	
+
+(a) not in the MVP; warn only. (b) support weekly rules
+	
+
+(b) strongly recommended: class timetables are recurring
+	
+
+M5
+
+D8
+	
+
+Show a neutral link to campus support if the student reports very low sleep on many nights?
+	
+
+(a) no. (b) yes, one line, after the team agrees on wording and thresholds with a counsellor
+	
+
+Decide with a professional before shipping any pilot; do not invent thresholds in code
+	
+
+before pilot
+
+D9
+	
+
+Task types for estimate learning
+	
+
+(a) the seven in section 5. (b) fewer or different
+	
+
+(a); editable later
+	
+
+M4
+
+D10
+	
+
+Name of the second comparison card
+	
+
+(a) "Deadline-aware scheduler (same allocation, no repair step)". (b) remove the card and keep two
+	
+
+(a)
+	
+
+M1
+16. Build order and definition of done
+
+Build in six milestones, in order; a milestone is done only when its listed tests pass and the demo scenarios in section 10 still produce the same numbers.
+
+Recommended repository layout (D6)
+
+the-25th-hour/
+  src/engine/    capacity.mjs  scheduler.mjs  evaluate.mjs  repairs.mjs  feedback.mjs  importers.mjs
+  src/ui/        index.html  styles.css  state.mjs  app.mjs  render-*.mjs
+  tests/         *.test.mjs   fixtures/   ui/
+  docs/          SPEC.md  (this document, exported as Markdown)
+
+    M0: Structure. Split the prototype's embedded engine into src/engine/ modules without changing behavior; move the UI to src/ui/ with one state object; import the existing engine.test.mjs and add golden tests T1 to T7 for the current behavior. Done when node --test passes and the page looks and behaves the same.
+
+    M1: Make the demo truthful. Fix B1, B2, B4, B5, B6, B7, B9 and add the B8 fixture. Adopt D1 and D10. Replace localeCompare with a plain comparison. Done when T1 to T15 and T20 pass.
+
+    M2: Real Commitment Check (F1). Build the input form (7.1), with-and-without verdicts, cost statement, accept options and the "Accept anyway" banner; fix B3 and extend the paste format; implement D2 and D3. Done when T16 to T18 pass and a new student can check a commitment in under ten seconds of typing.
+
+    M3: Setup, persistence and privacy. First-run setup (sleep window, weekly work hours), localStorage behind a storage wrapper with schemaVersion (D4), "Clear all my data", the no-network assertion. Done when T22 and T23 pass.
+
+    M4: Reality Feedback (F3). Task actual-hours prompt, estimate learning, optional morning sleep and stress report, "Did it work?" view (7.3). Done when T19 passes and the view matches the wording rules in sections 7 and 13.
+
+    M5: Reach and polish. Week navigation with no hard-coded days (D5), RRULE expansion (D7), accessibility pass, CSV export for the pilot, T21 and T24 in CI. Done when all of T1 to T24 pass.
+
+Definition of done for the MVP
+
+    All tests T1 to T24 pass on a clean checkout with node --test and npx playwright test.
+
+    Scenarios A to F in section 10 produce exactly the listed numbers.
+
+    The safety rules and privacy rules in section 13 each have a test or a manual checklist item that was run.
+
+    No feature outside section 4 was added.
+
+    A teammate who has not seen the code can run the demo from the README in under five minutes.
+
+Prompt template for LLM coding sessions (paste the full document first, then this)
+
+You are implementing milestone <M#> of The 25th Hour from the specification above.
+Rules: follow section 1; change only what the milestone lists; keep the engine pure and deterministic;
+write or update the tests named for this milestone BEFORE the code; run `node --test` and show the output.
+When finished, list: (1) files changed, (2) tests now passing by ID, (3) anything in the spec that was
+ambiguous and the option you chose, (4) anything you did not do.
+Do not change score weights, thresholds or copy unless the milestone says so.
+
+17. Glossary
+
+Terms are used with exactly these meanings throughout the document and the code.
+
+Term
+	
+
+Meaning
+
+Target (targetDay)
+	
+
+The student's own intended finish day for a task; a soft deadline. The check runs against targets
+
+Hard day / limit (hardDay)
+	
+
+The final allowed day for a task; moving beyond it needs someone else's approval
+
+Estimate levels
+	
+
+Optimistic (min), typical (likely), conservative (max) hours for a task
+
+Feasible / at-risk / infeasible
+	
+
+The three verdicts (6.4); feasible means every deadline is met even at conservative estimates with at least 60 minutes of slack
+
+Margin
+	
+
+Free minutes up to a deadline day minus the minutes of work due by then; negative means short
+
+Binding day
+	
+
+The deadline day with the smallest margin; the day the verdict message talks about
+
+Cushion
+	
+
+The 60 minutes of conservative slack required for a feasible verdict
+
+EDF
+	
+
+Earliest deadline first: the scheduling rule that always works on the task with the nearest deadline
+
+Slot
+	
+
+A 30-minute block of free time
+
+Protected sleep window
+	
+
+The hours (default 23:00 to 07:00) that are never offered as work time
+
+Proposal
+	
+
+A commitment the student is considering but has not accepted (isProposal = true)
+
+Repair
+	
+
+A set of one or two changes that, when re-checked, makes the plan better
+
+Self-serve change
+	
+
+A change the student can make alone (move a target, decline an optional task)
+
+Approval-dependent change
+	
+
+A change that needs a professor or teammate (extension, scope reduction); stays hypothetical until the student records the answer
+
+Scheduling problem vs capacity problem
+	
+
+A scheduling problem can be solved by reordering within existing flexibility; a capacity problem has more required work than available time and needs a task dropped, reduced or extended
+
+Golden test
+	
+
+A test whose expected values are fixed in this document (section 10)
+
+Concierge test
+	
+
+Running the engine by hand for a few real students to see whether they act on the output, before building more
+
+Simulated baseline
+	
+
+The weekly-hours and deadline-aware comparison cards, produced by this project's own code and not by any named product

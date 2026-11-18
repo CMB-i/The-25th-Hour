@@ -1,6 +1,18 @@
 {
   "name": "the-25th-hour",
   "private": true,
+<<<<<<< HEAD
   "type": "module",
   "scripts": { "test": "node --test" }
+=======
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Local-first workload decision support prototype",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+>>>>>>> bcee054 (Did some groundwork (directories and work distribution))
 }

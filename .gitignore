@@ -1,2 +1,10 @@
 node_modules/
+<<<<<<< HEAD
 .DS_Store
+=======
+playwright-report/
+test-results/
+coverage/
+.DS_Store
+*.log
+>>>>>>> bcee054 (Did some groundwork (directories and work distribution))
