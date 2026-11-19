@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Local-first workload decision support prototype",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "test:ui": "node tests/ui/browser-smoke.mjs"
   },
   "engines": {
     "node": ">=20"
