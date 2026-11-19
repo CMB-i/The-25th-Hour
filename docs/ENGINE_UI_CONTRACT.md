@@ -80,3 +80,21 @@ For draft proposals, the UI evaluates each one **without** and **with** its draf
 - **M4:** estimate learning only suggests, never silently changes a student's estimate.
 
 If an exported name or return shape must change, update **this document first**, notify the other person and land a small contract PR before dependent code.
+
+## Commitment and approval helpers
+
+- `createProposal(fields, days, {existingTasks, notBeforeDate} = {})` from `commitments.mjs` validates form data and returns a draft Task. Form keys are `title, likely, min, max, deadline, tag, latestDate, earliestDate, type`. Omit optional fields or pass empty strings for dates and estimates. Supply a campus date as `notBeforeDate` to reject past deadlines.
+- `evaluateCommitments(tasks, proposals, days, options)` returns `{before, separate, together}`. Each outcome contains `evaluation` and typical `cost`, the after outcomes also contain `proposalIds` and verified `repairs`.
+- `deadlineCost(schedule, days)` returns the binding deadline, capacity, demand, margin, shortfall, and contributing tasks in hours, or null when there are no deadlines. `verdictText(evaluation, days)` supplies the verdict copy. Release dates can make the schedule miss a deadline even with positive cumulative margins.
+- `applyAction` accepts an optional third argument `{approved: true}` for an explicitly approved action. It rejects approval-dependent actions by default, including actions with a falsified approval flag. For live plans use `applyRepair(tasks, days, repairId, {...options, approvedActionIds})`. It re-verifies against current inputs, then applies only when every dependent action is approved. Use `Repair.updated` and `Repair.test` exclusively for previews.
+- `draftApprovalRequest` accepts `{includeWorkload: true}` only after the student opts in. `emptyRepairMessage(verdict)` supplies the three empty states.
+- `Evaluation.minMargin` is null for an empty deadline set. Loaded dates must be valid, unique and chronological. A work or busy window may end at `24:00`.
+- `parsePastedTasks(text, days, {existingIds} = {})` can deconflict IDs against the current plan. Calendar windows round outward to half-hour boundaries to avoid making an overlapping slot available.
+
+## Week navigation and feedback
+
+- `rollingDays(anchorDate, weeklyWorkWindows)` from `weeks.mjs` creates 35 chronological days beginning on the Monday of the anchor week. Template entries are work-window arrays indexed by Sunday = 0. `weekView(days, weekIndex)` returns dates and indices for rendering. `rebasePlan(days, tasks, newDays)` reindexes active deadlines by date and retains busy windows on overlapping dates. It throws when a required date falls outside the new window.
+- `weeklyComparison(schedule, dayIndices)` returns the same total-hours shape as `weeklyCheck` for selected days and tasks due on those days. Use `weeklyCheck` for the entire loaded plan.
+- `plannedSleepMinutes(sleep)` gives the protected opportunity. `buildEstimateProfiles(feedback)` derives all seven profiles in the supplied record order. `sevenDayReview({feedback, sleepReports, appliedChanges, tasks, days, throughDate})` returns the inclusive seven-day estimates, deadline outcomes, adjustments, sleep comparison and neutral summary. Completion records may snapshot `title`, `targetDate`, and `hardDate` so later edits preserve the recorded outcomes. `campusDate(timestamp)` accepts a campus-local ISO timestamp or an ISO timestamp with an explicit offset.
+- A scope-reduction action consumes the stated one-time reduction allowance. A fresh scope allowance requires a new explicit edit to the task. The preview and applied task shapes agree.
+- The placeholder stores a `the25thhour.v1` snapshot through `src/ui/storage.mjs`. Keep the schema or supply a migration if the replacement UI needs a different persisted shape. Persist approval decisions keyed to the action and the plan it was verified against, and pass only approved action IDs to `applyRepair`.
