@@ -18,7 +18,7 @@ Open <http://127.0.0.1:8000>. GitHub Pages serves the same root files over HTTPS
 2. **Should I Say Yes? (`src/ui/render-check.mjs`):** Submit one or more draft commitments (name, typical hours, optional min/max with D3 `0.8× / 1.4×` defaults, deadline, priority tag, flexible latest acceptable date with D2 `+1 day` default, earliest start, and task type). Compare before-and-after verdicts (`separate` and `together` when multiple drafts are pending), read the plain-language cost statement and top verified fix, and choose **Accept**, **Accept with suggested change**, **Accept anyway** (which keeps the unresolved conflict visible), or **Not now**.
 3. **Make It Work (`src/ui/render-rescue.mjs`):** Review up to 5 ranked verified repairs with `Self-serve` vs. `Needs approval` badges, preview the adjusted 30-minute timeline, apply self-serve fixes, or use the multi-step **Undo last change** history. For approval-gated repairs (such as deadline extensions or approval-required scope reductions), copy the plain-text request draft (with optional opt-in workload summary), record **Mark approved** or **Mark declined**, and explicitly click **Apply approved change** once approved.
 4. **Did It Work? (`src/ui/render-feedback.mjs`):** Record actual completion hours with one tap on **As planned** or a half-hour stepper, log optional/skippable morning sleep and stress check-ins, and inspect the 7-day review (deadlines met/missed, estimate vs. actual hours, applied adjustments, reported sleep vs. protected sleep opportunity, and learned per-type estimate ratios that unlock optional suggestions after 3 samples without ever overwriting user input silently).
-5. **Settings (`src/ui/render-settings.mjs`):** Configure the protected sleep window, 5-week anchor date, and weekly available work windows; import a local `.ics` calendar file (up to 1 MB / 2,000 events, read locally via `File.text()` with weekly `RRULE` support) or paste deadline lines (`Title | 3h | YYYY-MM-DD | tag | [optional latest date]`); export feedback as CSV; or click **Clear all my data** to wipe `localStorage` (`the25thhour.v1`).
+5. **Settings (`src/ui/render-settings.mjs`):** Configure the protected sleep window, 5-week anchor date, and weekly available work windows; import a local `.ics` calendar file (up to 1 MB / 2,000 events, read locally via `File.text()` with weekly `RRULE` support) or paste deadline lines (`Title | 3h | YYYY-MM-DD | tag | [optional latest date]`); export feedback as CSV (task feedback, sleep reports and applied repairs, for the pilot in [docs/PILOT.md](docs/PILOT.md)); or click **Clear all my data** to wipe `localStorage` (`the25thhour.v1`).
 
 The built-in demo covers 16–20 November 2026 inside a five-week rolling window. To start a fresh plan on current dates, click **Clear all my data** and save an anchor date in **Settings**.
 
@@ -80,24 +80,31 @@ the-25th-hour/
 │   ├── engine.test.mjs            # T8–T15, T20 property & approval-gate tests
 │   ├── feedback.test.mjs          # T19 estimate learning & 7-day review tests
 │   ├── golden.test.mjs            # T1–T7 golden scenario tests
+│   ├── pilot.test.mjs             # Pilot analysis script against a real CSV export
+│   ├── safety.test.mjs            # SPEC §13 safety & privacy rules (see docs/QA_CHECKLIST.md)
 │   ├── imports.test.mjs           # T16–T18 importer & validation tests
 │   ├── weeks.test.mjs             # 5-week navigation & T24 engine performance benchmark
-│   ├── fixtures/                  # Calendar (.ics) and 5-week/30-task workload fixtures
+│   ├── fixtures/                  # Calendar (.ics), 5-week/30-task workload and pilot diary fixtures
 │   └── ui/
 │       └── browser-smoke.mjs      # T21–T24 automated Chrome/Chromium DevTools acceptance suite
+├── scripts/
+│   └── analyze-pilot.mjs          # Pilot summary: per-participant medians & process metrics (no significance claims)
 ├── docs/
 │   ├── SPEC.txt                   # Build specification
+│   ├── DEMO.md                    # Five-minute professor demo script with golden numbers
+│   ├── PILOT.md                   # Pilot consent text, morning diary template and analysis guide
+│   ├── QA_CHECKLIST.md            # SPEC §13 rules mapped to tests / manual checks, with results
 │   ├── ENGINE_UI_CONTRACT.md      # Engine ↔ UI module boundary and data contracts
 │   └── WORK_DIVISION.md           # Team ownership and milestone gates
 ├── reference/
 │   └── legacy-prototype.html      # Original single-file prototype snapshot (read-only)
-├── .github/workflows/tests.yml    # CI workflow running node --test and browser-smoke.mjs
+├── .github/workflows/tests.yml    # CI: node --test, browser-smoke.mjs at / and at a Pages-style subpath
 └── package.json
 ```
 
 ## Tests
 
-Use Node.js 20+ for the deterministic engine test suite (`T1–T20` and `T24`):
+Use Node.js 20+ for the deterministic engine test suite (`T1–T20`, `T24`, the section 13 safety checks in `tests/safety.test.mjs` and the pilot-script test):
 
 ```bash
 node --test

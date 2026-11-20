@@ -6,7 +6,7 @@ The definition of done (section 16) requires each section 13 rule to have an aut
 - **Automated, browser:** `tests/ui/browser-smoke.mjs` (T21–T24, `npm run test:ui`).
 - **Manual:** run in Chrome against `python3 -m http.server 8000`, following the steps given.
 
-Last run: 20 Nov 2026, branch `claude/25th-hour-qa-demo-7x0a2o`. Results: `node --test` 39/39 pass; `npm run test:ui` T21–T24 pass.
+Last run: 20 Nov 2026, branch `claude/25th-hour-qa-demo-7x0a2o`. Results: `node --test` 41/41 pass; `npm run test:ui` T21–T24 pass, at `/` and at a `/The-25th-Hour/` subpath.
 
 ## Safety rules
 

@@ -33,7 +33,7 @@ function csvCell(value) {
  */
 export function buildFeedbackCsv(state) {
   const rows = [
-    ['record_type', 'id_or_date', 'title_or_night', 'task_type', 'estimated_or_planned_hours', 'actual_or_slept_hours', 'stress', 'target_date', 'hard_date', 'recorded_at']
+    ['record_type', 'id_or_date', 'title_or_night', 'task_type', 'estimated_or_planned_hours', 'actual_or_slept_hours', 'stress', 'target_date', 'hard_date', 'recorded_at', 'change_kind']
   ];
   for (const item of state.feedback.tasks) {
     rows.push([
@@ -46,7 +46,8 @@ export function buildFeedbackCsv(state) {
       '',
       item.targetDate ?? '',
       item.hardDate ?? '',
-      item.recordedAt ?? ''
+      item.recordedAt ?? '',
+      ''
     ]);
   }
   for (const report of state.feedback.sleepReports) {
@@ -60,7 +61,20 @@ export function buildFeedbackCsv(state) {
       report.stress ?? '',
       '',
       '',
-      report.date
+      report.date,
+      ''
+    ]);
+  }
+  // Applied (not undone) repairs, for the pilot's process metrics (SPEC section 14). Uses only
+  // the existing applied-change history; nothing new is tracked.
+  for (const change of state.appliedChanges ?? []) {
+    rows.push([
+      'applied_change',
+      change.repairId ?? '',
+      (change.labels ?? []).join(' + '),
+      '', '', '', '', '', '',
+      change.recordedAt ?? '',
+      change.approved ? 'approved' : 'self_serve'
     ]);
   }
   return rows.map(row => row.map(csvCell).join(',')).join('\n');
