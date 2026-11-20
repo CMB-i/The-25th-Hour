@@ -69,6 +69,6 @@ export function sevenDayReview({feedback = [], sleepReports = [], appliedChanges
     })),
     plannedDays, averageSleepHours,
     summary:`Your plan kept protected sleep time free on ${plannedDays} of ${plannedDays} loaded days in this review.` +
-      (reports.length ? ` You reported ${Number(averageSleepHours.toFixed(2))}h on average on ${reports.length} logged nights.` : '') +
+      (reports.length ? ` You reported ${Number(averageSleepHours.toFixed(2))}h on average on ${reports.length} logged ${reports.length === 1 ? 'night' : 'nights'}.` : '') +
       " A feasible plan makes room to sleep; it can't guarantee sleep."};
 }
