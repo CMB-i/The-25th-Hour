@@ -386,12 +386,12 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
   const profileRows = (derived.estimateProfiles ?? []).map(profile => {
     const label = TYPE_NAMES[profile.type] ?? profile.type;
     const statusText = profile.samples === 0
-      ? 'Default 1.0× (0 of 3 samples)'
+      ? 'Default (0 of 3 samples)'
       : profile.samples < 3
-        ? `Learning (${profile.samples} of 3 samples · current ${Number(profile.ratio.toFixed(3))}×)`
-        : `Active (${Number(profile.ratio.toFixed(3))}× from ${profile.samples} samples)`;
-    return h('div', { className: 'estimate-row' },
-      h('strong', {}, `${label} (${profile.type})`),
+        ? `Learning (${profile.samples} of 3 samples)`
+        : `Active (${profile.samples} samples)`;
+    return h('div', { className: 'estimate-row estimate-row-wide' },
+      h('strong', {}, label),
       h('span', {}, `${Number(profile.ratio.toFixed(3))}×`),
       h('span', { className: profile.samples >= 3 ? 'ok' : '' }, statusText)
     );
@@ -415,7 +415,7 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
       'After 3 completed tasks of a type, Should I Say Yes? displays an optional adjusted estimate alongside your entered hours. Your entered estimate is never changed silently.'
     ),
     h('div', { className: 'estimate-table' },
-      h('div', { className: 'estimate-row header' },
+      h('div', { className: 'estimate-row estimate-row-wide header' },
         h('span', {}, 'TASK TYPE'),
         h('span', {}, 'RATIO'),
         h('span', {}, 'STATUS')
@@ -423,8 +423,8 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
       profileRows.length
         ? profileRows
         : TASK_TYPES.map(t =>
-            h('div', { className: 'estimate-row' },
-              h('strong', {}, `${TYPE_NAMES[t] ?? t} (${t})`),
+            h('div', { className: 'estimate-row estimate-row-wide' },
+              h('strong', {}, TYPE_NAMES[t] ?? t),
               h('span', {}, '1×'),
               h('span', {}, 'Default (0 of 3 samples)')
             )

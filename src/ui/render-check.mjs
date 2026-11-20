@@ -678,9 +678,9 @@ export function renderCheckScreen(container, { state, derived, dispatch }) {
       updateDynamicHelpers();
     }
   },
-    h('option', { value: 'must-keep', selected: draft.tag === 'must-keep' }, 'must-keep — Must-keep (priority 1, fixed target)'),
-    h('option', { value: 'flexible', selected: draft.tag === 'flexible' }, 'flexible — Flexible (soft target can move to latest date)'),
-    h('option', { value: 'droppable', selected: draft.tag === 'droppable' }, 'droppable — Droppable (optional commitment)')
+    h('option', { value: 'must-keep', selected: draft.tag === 'must-keep' }, 'Must-keep (fixed target)'),
+    h('option', { value: 'flexible', selected: draft.tag === 'flexible' }, 'Flexible (target can move)'),
+    h('option', { value: 'droppable', selected: draft.tag === 'droppable' }, 'Droppable (optional)')
   );
 
   inputNodes.latestDate = h('input', {
@@ -720,7 +720,7 @@ export function renderCheckScreen(container, { state, derived, dispatch }) {
   },
     TASK_TYPES.map(typeKey =>
       h('option', { value: typeKey, selected: draft.type === typeKey },
-        `${typeKey} — ${(TASK_TYPE_LABELS[typeKey] ?? TASK_TYPE_LABELS.other).label}`
+        (TASK_TYPE_LABELS[typeKey] ?? TASK_TYPE_LABELS.other).label
       )
     )
   );

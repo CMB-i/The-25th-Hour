@@ -1119,6 +1119,16 @@ p.helper,
   letter-spacing: 0.6px;
 }
 
+/* Column headers are single words; never split them mid-word (e.g. "DEADLIN/ES" at 360px). */
+.estimate-row.header > * {
+  overflow-wrap: normal;
+}
+
+/* Settings estimate table: the status column holds a short phrase, not a single word. */
+.estimate-row.estimate-row-wide {
+  grid-template-columns: minmax(0, 1.4fr) minmax(56px, 0.6fr) minmax(0, 1.4fr);
+}
+
 .estimate-row strong:last-child {
   text-align: right;
 }
@@ -1786,6 +1796,11 @@ p.helper,
 }
 
 @media (max-width: 720px) {
+  /* On phones the wrapped two-row nav is ~175px tall; a sticky header would cover a fifth of the screen. */
+  .masthead {
+    position: static;
+  }
+
   .comparison-cards,
   .preview-facts,
   .form-grid-two,
@@ -1834,7 +1849,7 @@ p.helper,
   }
 
   .estimate-row {
-    grid-template-columns: 1fr 1fr 60px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
     font-size: 13px;
   }
 }

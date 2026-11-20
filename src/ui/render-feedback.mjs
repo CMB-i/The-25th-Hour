@@ -150,7 +150,7 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
     name: 'taskType'
   },
     TASK_TYPES.map(typeKey =>
-      h('option', { value: typeKey }, `${typeKey} — ${(TYPE_LABELS[typeKey] ?? TYPE_LABELS.other).label}`)
+      h('option', { value: typeKey }, (TYPE_LABELS[typeKey] ?? TYPE_LABELS.other).label)
     )
   );
 
@@ -418,17 +418,17 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
     const label = (TYPE_LABELS[profile.type] ?? TYPE_LABELS.other).label;
     const example4h = getEstimateSuggestion(profile, 4);
     const detail = profile.samples === 0
-      ? `${profile.type}: 1× (0 samples)`
+      ? 'Ratio 1× · no samples yet'
       : profile.samples < 3
-        ? `${profile.type}: ${Number(profile.ratio.toFixed(3))}× — learning (${profile.samples} of 3)`
-        : `${profile.type}: ${Number(profile.ratio.toFixed(3))}× (${profile.samples} samples${example4h ? `, e.g. 4h → ${fmtHours(example4h)}` : ''})`;
+        ? `Ratio ${Number(profile.ratio.toFixed(3))}× — learning (${profile.samples} of 3)`
+        : `Ratio ${Number(profile.ratio.toFixed(3))}× (${profile.samples} samples${example4h ? `, e.g. 4h → ${fmtHours(example4h)}` : ''})`;
     return h('li', { className: 'task-row' },
       h('div', { className: 'task-row-title' },
-        h('strong', {}, `${label} (${profile.type})`),
+        h('strong', {}, label),
         h('small', {}, detail)
       ),
       h('span', { className: `task-pill ${profile.samples >= 3 ? 'droppable' : ''}` },
-        profile.samples >= 3 ? `${Number(profile.ratio.toFixed(2))}× learned` : `Learning (${profile.samples}/3)`
+        profile.samples >= 3 ? `${Number(profile.ratio.toFixed(2))}× learned` : `Learning (${profile.samples} of 3)`
       )
     );
   });
@@ -443,7 +443,7 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
           : entry.metHardDeadline ? '✓ Hard deadline met' : '✕ Hard deadline missed';
         return h('li', { className: 'task-row' },
           h('div', { className: 'task-row-title' },
-            h('strong', {}, `${entry.title} (${entry.type})`),
+            h('strong', {}, `${entry.title} (${(TYPE_LABELS[entry.type] ?? TYPE_LABELS.other).label})`),
             h('small', {},
               `Estimated ${fmtHours(entry.estimatedLikely)} vs Actual ${fmtHours(entry.actualHours)} · Completed ${entry.date}${
                 entry.targetDate ? ` (target ${entry.targetDate}${entry.hardDate && entry.hardDate !== entry.targetDate ? `, hard ${entry.hardDate}` : ''})` : ''
