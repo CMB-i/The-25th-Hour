@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+// TEST_ORIGIN may include a path (e.g. http://127.0.0.1:8001/The-25th-Hour) to test a GitHub Pages subpath.
 const origin = (process.env.TEST_ORIGIN ?? 'http://127.0.0.1:8000').replace(/\/$/, '');
+const permissionOrigin = new URL(origin).origin;
 const MAC_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const executable = process.env.CHROMIUM
   ?? (process.platform === 'darwin' && existsSync(MAC_CHROME) ? MAC_CHROME : 'google-chrome');
@@ -231,7 +233,7 @@ try {
     await contents('#screen-rescue .strategy-preview', /IF APPROVED/);
     await command('Page.bringToFront');
     await command('Emulation.setFocusEmulationEnabled', { enabled: true });
-    await command('Browser.grantPermissions', { origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
+    await command('Browser.grantPermissions', { origin: permissionOrigin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
     await click('#screen-rescue .strategy-preview button', 'Copy approval request');
     await contents('#status-region', /Approval request copied/);
     assert.match(await js('navigator.clipboard.readText()'), /deadline.*2026-11-20/i);

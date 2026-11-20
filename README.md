@@ -22,6 +22,30 @@ Open <http://127.0.0.1:8000>. GitHub Pages serves the same root files over HTTPS
 
 The built-in demo covers 16–20 November 2026 inside a five-week rolling window. To start a fresh plan on current dates, click **Clear all my data** and save an anchor date in **Settings**.
 
+## Deploy to GitHub Pages
+
+The app is plain static files with relative paths (`./src/ui/app.mjs`, `../engine/*.mjs`). No build step is needed, and it works from a repository subpath such as `https://<owner>.github.io/The-25th-Hour/`. CI checks this: the second browser step runs T21–T24 against `http://127.0.0.1:8001/The-25th-Hour/`. To repeat that locally:
+
+```bash
+mkdir -p /tmp/pages && ln -sfn "$PWD" /tmp/pages/The-25th-Hour
+python3 -m http.server 8001 --bind 127.0.0.1 --directory /tmp/pages
+TEST_ORIGIN=http://127.0.0.1:8001/The-25th-Hour npm run test:ui
+```
+
+To publish (a repository admin does this once, in the browser):
+
+1. Open the repository on GitHub and go to **Settings → Pages** (under "Code and automation").
+2. Under **Build and deployment → Source**, choose **Deploy from a branch**.
+3. Under **Branch**, choose `main` and folder **`/ (root)`**, then click **Save**.
+4. Wait for the "pages build and deployment" run on the **Actions** tab to finish (about a minute). The site URL then appears at the top of **Settings → Pages**: `https://<owner>.github.io/The-25th-Hour/` (for this repository, `https://cmb-i.github.io/The-25th-Hour/`).
+5. Open the URL. Check that the Scenario A verdict reads "Thursday (2026-11-19): 15h of work due, 13h available. Short by 2h." Then check that DevTools → Network shows only requests to the Pages host.
+
+Notes:
+
+- GitHub Pages on a **private** repository needs a paid GitHub plan. On the free plan the repository must be public.
+- Every project site under `<owner>.github.io` shares one browser origin, and therefore one `localStorage`. Data saved under `the25thhour.v1` could be read by another Pages site published from the same account. For a pilot, publish from an account or organisation with no other Pages sites, or ask participants to use **Clear all my data** when they finish.
+- Pages serves over HTTPS, which the clipboard API (**Copy approval request**) requires outside `localhost`/`127.0.0.1`.
+
 ## Architecture & Repository Layout
 
 ```text
