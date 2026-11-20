@@ -21,10 +21,18 @@ const INJECTION = '<img src=x onerror=alert(1)>';
 const profile = await mkdtemp(join(tmpdir(), '25th-hour-chrome-'));
 const chrome = spawn(executable, [
   '--headless=new', '--disable-gpu', '--disable-background-networking', '--no-first-run',
-  '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+  '--no-default-browser-check', '--disable-dev-shm-usage', '--remote-debugging-port=0',
+  `--user-data-dir=${profile}`,
   ...(process.env.CHROMIUM_NO_SANDBOX ? ['--no-sandbox'] : []),
   'about:blank'
-], { stdio: 'ignore' });
+], { stdio: ['ignore', 'ignore', 'pipe'] });
+// Keep the tail of Chrome's stderr so a failed launch is diagnosable in CI logs.
+let chromeStderr = '';
+chrome.stderr.on('data', chunk => { chromeStderr = (chromeStderr + chunk).slice(-4000); });
+let chromeExit = null;
+chrome.once('exit', (code, signal) => { chromeExit = { code, signal }; });
+chrome.once('error', failure => { chromeExit = { error: failure.message }; });
+const LAUNCH_TIMEOUT_MS = Number(process.env.CHROMIUM_LAUNCH_TIMEOUT_MS ?? 60000);
 
 const results = [];
 let ws;
@@ -46,7 +54,19 @@ async function section(name, run) {
 }
 
 try {
-  const port = await retry(async () => (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0], 200);
+  // Cold Chrome starts on CI runners can take well over 10 s; wait up to LAUNCH_TIMEOUT_MS,
+  // but stop at once (with Chrome's own error output) if the browser process exits.
+  const launchStart = performance.now();
+  let port;
+  while (!port) {
+    if (chromeExit) throw Error(`Chrome (${executable}) exited before DevTools was ready: ${JSON.stringify(chromeExit)}\n${chromeStderr}`);
+    if (performance.now() - launchStart > LAUNCH_TIMEOUT_MS) {
+      throw Error(`Chrome (${executable}) did not open DevTools within ${LAUNCH_TIMEOUT_MS} ms.\n${chromeStderr}`);
+    }
+    port = await readFile(join(profile, 'DevToolsActivePort'), 'utf8')
+      .then(contents => contents.split('\n')[0].trim())
+      .catch(() => delay(100).then(() => undefined));
+  }
   const targets = await retry(async () => {
     const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
     assert.ok(list.some(target => target.type === 'page'));
