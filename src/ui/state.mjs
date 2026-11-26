@@ -25,6 +25,11 @@ const STATEFUL_ACTIONS = new Set([
   'LOAD_DEMO',
   'UPDATE_DEMO_RESEARCH',
   'ADD_PROPOSAL',
+  'UPDATE_PROPOSAL',
+  'SET_NAME',
+  'LEAVE_DEMO',
+  'ADD_BUSY_BLOCK',
+  'REMOVE_BUSY_BLOCK',
   'DISCARD_PROPOSAL',
   'ACCEPT_PROPOSAL',
   'SELECT_REPAIR',
@@ -43,9 +48,9 @@ const STATEFUL_ACTIONS = new Set([
 ]);
 
 const VERDICT_NAMES = {
-  feasible: 'Feasible',
-  'at-risk': 'At risk',
-  infeasible: 'Infeasible'
+  feasible: 'fits',
+  'at-risk': 'tight',
+  infeasible: "doesn't fit"
 };
 
 /**
@@ -56,7 +61,10 @@ export function makeInitialState({ fixed = false, demo = true, nowIso } = {}) {
   const anchor = demo
     ? sample.days[0].date
     : (campusDate(nowIso ?? new Date().toISOString()) ?? sample.days[0].date);
-  const weeklyWorkWindows = [[], ...sample.days.map(day => day.workWindows), []];
+  // A personal week starts with no work availability: the demo fixture is never presented as the student's own.
+  const weeklyWorkWindows = demo
+    ? [[], ...sample.days.map(day => day.workWindows), []]
+    : [[], [], [], [], [], [], []];
   const days = rollingDays(anchor, weeklyWorkWindows);
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -82,10 +90,26 @@ export function makeInitialState({ fixed = false, demo = true, nowIso } = {}) {
     lastEditedAt: null,
     unresolvedConflict: false,
     draftIncludeWorkload: false,
+    displayName: '',
+    personalBackup: null,
     skippedSleepPromptDate: null,
     lastImportReport: null,
     notice: ''
   };
+}
+
+/**
+ * True when the student has put their own week into the app (not a blank start, not example data).
+ */
+export function isSetUp(state) {
+  if (state.demo) return false;
+  const hasWork = (state.settings?.weeklyWorkWindows ?? []).some(day => (day ?? []).length > 0);
+  return Boolean(state.setupComplete || state.tasks.length || state.calendarImportedAt || hasWork);
+}
+
+function personalSnapshot(state) {
+  const { personalBackup, notice, ...rest } = state;
+  return rest;
 }
 
 /**
@@ -287,6 +311,17 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
       return { ...state, screen: action.screen, notice: '' };
     }
 
+    case 'OPEN_SCREEN': {
+      // Used once at startup. Not persisted, so opening the app never rewrites saved data.
+      if (!VALID_SCREENS.includes(action.screen)) {
+        throw Error(`Unknown screen: ${action.screen}`);
+      }
+      return { ...state, screen: action.screen };
+    }
+
+    case 'SET_NAME':
+      return { ...state, displayName: String(action.name ?? '').trim().slice(0, 40), notice: '' };
+
     case 'SET_WEEK': {
       const maxWeek = Math.max(0, Math.min(LOADED_WEEKS - 1, Math.ceil(state.days.length / 7) - 1));
       const requested = Number.isInteger(action.weekIndex) ? action.weekIndex : state.weekIndex;
@@ -297,14 +332,39 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
     case 'LOAD_DEMO': {
       const fixed = Boolean(action.fixed);
       const fresh = makeInitialState({ fixed, demo: true, nowIso: nowFn() });
+      // Entering an example never overwrites the student's own week: it is stashed and restored on leave.
+      const personalBackup = state.demo
+        ? (state.personalBackup ?? null)
+        : (isSetUp(state) ? personalSnapshot(state) : null);
       return {
         ...fresh,
         screen: state.screen,
         setupComplete: state.setupComplete,
+        displayName: state.displayName ?? '',
+        personalBackup,
         lastEditedAt: nowFn(),
         notice: fixed
-          ? 'Loaded Scenario B: All deadlines fixed demo.'
-          : 'Loaded Scenario A: Flexible target demo.'
+          ? 'Showing example week B (all deadlines fixed).'
+          : 'Showing example week A (some deadlines can slide).'
+      };
+    }
+
+    case 'LEAVE_DEMO': {
+      if (!state.demo) return state;
+      if (state.personalBackup) {
+        return {
+          ...state.personalBackup,
+          screen: state.screen,
+          personalBackup: null,
+          notice: 'Back to your own week.'
+        };
+      }
+      const blank = makeInitialState({ demo: false, nowIso: nowFn() });
+      return {
+        ...blank,
+        screen: state.screen,
+        displayName: state.displayName ?? '',
+        notice: 'Example closed. Your own week is empty so far.'
       };
     }
 
@@ -379,7 +439,75 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         proposals: [...state.proposals, proposal],
         estimateProfiles: buildEstimateProfiles(state.feedback.tasks),
         lastEditedAt: nowFn(),
-        notice: `Checked "${proposal.title}". Review the before-and-after impact below to decide.`
+        notice: ''
+      };
+    }
+
+    case 'UPDATE_PROPOSAL': {
+      const target = state.proposals.find(item => item.id === action.proposalId);
+      if (!target) {
+        throw Error('That request is no longer pending.');
+      }
+      const raw = action.fields ?? {};
+      const parseOptionalHour = value =>
+        value === '' || value === null || value === undefined ? '' : Number(value);
+      const fields = {
+        title: raw.title,
+        likely: parseOptionalHour(raw.likely),
+        min: parseOptionalHour(raw.min),
+        max: parseOptionalHour(raw.max),
+        deadline: raw.deadline ?? '',
+        tag: raw.tag !== undefined && raw.tag !== '' ? raw.tag : 'must-keep',
+        latestDate: raw.latestDate ?? '',
+        earliestDate: raw.earliestDate ?? '',
+        type: raw.type !== undefined && raw.type !== '' ? raw.type : 'other'
+      };
+      const notBeforeDate = action.notBeforeDate !== undefined
+        ? action.notBeforeDate
+        : (state.demo ? state.days[0].date : campusDate(nowFn()));
+      const others = getAllKnownTasks(state).filter(item => item.id !== target.id);
+      const created = createProposal(fields, state.days, { existingTasks: others, notBeforeDate });
+      const updated = { ...created, id: target.id };
+      return {
+        ...state,
+        proposals: state.proposals.map(item => item.id === target.id ? updated : item),
+        lastEditedAt: nowFn(),
+        notice: ''
+      };
+    }
+
+    case 'ADD_BUSY_BLOCK':
+    case 'REMOVE_BUSY_BLOCK': {
+      const dayIndex = action.dayIndex;
+      const day = state.days[dayIndex];
+      if (!Number.isInteger(dayIndex) || !day) {
+        throw Error('Pick a day from the loaded weeks.');
+      }
+      const start = String(action.start ?? '');
+      const end = String(action.end ?? '');
+      let busyWindows;
+      if (action.type === 'ADD_BUSY_BLOCK') {
+        if (!start || !end) throw Error('Enter a start and end time for the busy block.');
+        if (start >= end) throw Error('A busy block must end after it starts.');
+        busyWindows = day.busyWindows.some(([from, to]) => from === start && to === end)
+          ? day.busyWindows.map(window => [...window])
+          : [...day.busyWindows.map(window => [...window]), [start, end]]
+            .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      } else {
+        busyWindows = day.busyWindows
+          .filter(([from, to]) => !(from === start && to === end))
+          .map(window => [...window]);
+      }
+      const days = state.days.map((item, index) => index === dayIndex ? { ...item, busyWindows } : item);
+      // Validates the new window against the engine's own rules (HH:MM, same day).
+      makeSlots(days, state.sleep);
+      return {
+        ...state,
+        days,
+        pendingApprovals: [],
+        selectedRepairId: null,
+        lastEditedAt: nowFn(),
+        notice: ''
       };
     }
 
@@ -685,7 +813,7 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         settings: { anchor, weeklyWorkWindows },
         appliedChanges,
         setupComplete: action.setupComplete !== undefined ? Boolean(action.setupComplete) : true,
-        demo: state.demo && !datesChanged,
+        demo: state.demo,
         weekIndex: datesChanged ? 0 : state.weekIndex,
         pendingApprovals: [],
         selectedRepairId: null,
@@ -960,12 +1088,12 @@ export function createStore({ storage = null, nowFn = () => new Date().toISOStri
       state = { ...loaded.state, weekIndex: derived.weekIndex };
     } catch {
       state = {
-        ...makeInitialState({ fixed: false, demo: true, nowIso: nowFn() }),
+        ...makeInitialState({ fixed: false, demo: false, nowIso: nowFn() }),
         notice: 'Saved data could not be read. A fresh plan is open.'
       };
     }
   } else {
-    state = makeInitialState({ fixed: false, demo: true, nowIso: nowFn() });
+    state = makeInitialState({ fixed: false, demo: false, nowIso: nowFn() });
     if (loaded.warning) state = { ...state, notice: loaded.warning };
   }
 

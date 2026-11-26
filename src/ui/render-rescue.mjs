@@ -1,27 +1,30 @@
 import { deadlineCost } from '../engine/evaluate.mjs';
 import { draftApprovalRequest, emptyRepairMessage } from '../engine/repairs.mjs';
 import { weekView } from '../engine/weeks.mjs';
-import {
-  buildVerdictCopy,
-  copyToClipboard,
-  fmtShortDate,
-  fmtShortWeekday,
-  fmtSignedHours,
-  fmtTimestamp,
-  h,
-  verdictClass,
-  verdictIcon,
-  verdictLabel
-} from './dom.mjs';
-import { getApprovalRecord } from './state.mjs';
+import { conflictClause, dayLabel, hoursPhrase } from './check-model.mjs';
+import { fmtTimestamp, h, verdictLabel } from './dom.mjs';
+import { makeCopyControls } from './reply-slip.mjs';
 import { renderTimeline } from './render-timeline.mjs';
+import { getApprovalRecord } from './state.mjs';
 
-function formatMarginLine(label, cost) {
-  if (!cost) return `${label}: No deadlines`;
-  return `${label}: ${fmtShortWeekday(cost.date)} (${fmtShortDate(cost.date)}) ${fmtSignedHours(cost.marginHours)}`;
+// Edited approval drafts, keyed by repair id. UI-only; never sent, never persisted.
+const draftEdits = new Map();
+
+function repairLabel(repair) {
+  return repair.actions.map(action => action.label).join(' + ');
 }
 
-function previewWeekIndex(repair, state, derived) {
+function effectText(repair, state) {
+  const typical = deadlineCost(repair.test.typical, state.days);
+  const lead = repair.needsApproval ? 'If approved' : 'After this change';
+  if (!repair.test.typical.feasible) return `${lead}, it still doesn't fit.`;
+  const word = repair.test.verdict === 'feasible' ? 'it fits' : 'it fits, but tightly';
+  return typical
+    ? `${lead}, ${word}. Your tightest day, ${dayLabel(typical.date)}, would have ${hoursPhrase(Math.max(0, typical.marginHours))} to spare.`
+    : `${lead}, ${word}.`;
+}
+
+function previewWeekIndex(repair, derived) {
   const firstAction = repair.actions[0];
   const targetDay = firstAction?.toDay
     ?? repair.updated.find(task => task.id === firstAction?.taskId)?.targetDay;
@@ -31,335 +34,212 @@ function previewWeekIndex(repair, state, derived) {
   return derived.weekIndex;
 }
 
-function approvalBadgeText(repair, status) {
-  if (!repair.needsApproval) return 'Self-serve';
-  if (status === 'approved') return 'Needs approval · Approved (ready to apply)';
-  if (status === 'declined') return 'Needs approval · Declined';
-  return 'Needs approval (pending)';
-}
-
-function renderHistoryPanel(state, dispatch) {
+function renderHistory(state, dispatch) {
   const changes = state.appliedChanges;
-  return h('section', { className: 'panel history-panel' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('span', { className: 'panel-label' }, 'APPLIED CHANGES & UNDO'),
-        h('h3', {}, 'Adjustment log')
-      ),
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        disabled: changes.length === 0,
-        onClick: () => dispatch({ type: 'UNDO_LAST_REPAIR' })
-      }, changes.length ? `Undo last change (${changes.length})` : 'Nothing to undo')
+  if (!changes.length) return null;
+  return h('details', { className: 'quiet-details history-panel', id: 'reset-history' },
+    h('summary', {}, `Changes already made (${changes.length})`),
+    h('ul', { className: 'plain-list' },
+      [...changes].reverse().map(change =>
+        h('li', {},
+          h('strong', {}, (change.labels ?? []).join(' + ') || 'Applied adjustment'),
+          change.recordedAt ? ` · applied ${fmtTimestamp(change.recordedAt)}` : '',
+          change.approved ? ' · approved first' : ' · self-serve'))
     ),
-    changes.length
-      ? h('ul', { className: 'history-list' },
-          [...changes].reverse().map(change =>
-            h('li', { className: 'history-row' },
-              h('div', {},
-                h('strong', {}, (change.labels ?? []).join(' + ') || 'Applied adjustment'),
-                change.recordedAt ? h('small', {}, `Applied ${fmtTimestamp(change.recordedAt)}`) : null
-              ),
-              h('span', { className: `task-pill ${change.approved ? 'flexible' : 'droppable'}` },
-                change.approved ? 'Approved' : 'Self-serve'
-              )
-            )
-          )
-        )
-      : h('p', { className: 'helper' }, 'No repairs have been applied to your plan yet.')
+    h('button', {
+      type: 'button', id: 'undo-last', className: 'link-button',
+      onClick: () => dispatch({ type: 'UNDO_LAST_REPAIR' })
+    }, 'Undo last change')
   );
 }
 
-function renderPreviewPanel(selected, state, derived, dispatch) {
-  const approvalRecord = selected.needsApproval
-    ? getApprovalRecord(state, selected.id, derived.fingerprint)
-    : null;
-  const approvalStatus = approvalRecord?.status ?? 'pending';
-  const typAfter = deadlineCost(selected.test.typical, state.days);
-  const consAfter = deadlineCost(selected.test.conservative, state.days);
-  const targetWeek = previewWeekIndex(selected, state, derived);
-  const previewWeek = weekView(state.days, targetWeek);
-  const previewResultClass = verdictClass(selected.test.verdict);
-  const requestDraft = selected.needsApproval
-    ? draftApprovalRequest(selected, state.days, { includeWorkload: state.draftIncludeWorkload })
-    : '';
-
-  const controls = !selected.needsApproval
-    ? h('div', { className: 'preview-actions' },
+function renderApproval(selected, state, derived, dispatch) {
+  const record = getApprovalRecord(state, selected.id, derived.fingerprint);
+  const status = record?.status ?? 'pending';
+  const auto = draftApprovalRequest(selected, state.days, { includeWorkload: state.draftIncludeWorkload });
+  const textarea = h('textarea', {
+    id: 'reply-text', className: 'reply-text', rows: '7', spellcheck: 'true',
+    'aria-label': 'Request to send. You can edit it.'
+  });
+  textarea.value = draftEdits.get(selected.id) ?? auto;
+  textarea.addEventListener('input', () => {
+    if (textarea.value === auto) draftEdits.delete(selected.id);
+    else draftEdits.set(selected.id, textarea.value);
+  });
+  const copy = makeCopyControls(() => textarea.value, 'Copy reply');
+  return h('section', { className: 'reply-slip', id: 'reply-slip' },
+    h('div', { className: 'slip-head' },
+      h('h3', {}, "Here's what you could send"),
+      h('span', { className: 'slip-kind' }, 'A request for someone to approve a change')
+    ),
+    textarea,
+    h('label', { className: 'check-line' },
+      h('input', {
+        type: 'checkbox', checked: state.draftIncludeWorkload,
+        onChange: ev => { draftEdits.delete(selected.id); dispatch({ type: 'SET_DRAFT_WORKLOAD', include: ev.currentTarget.checked }); }
+      }),
+      h('span', {}, 'Include a line about my workload')),
+    h('p', { className: 'slip-note' },
+      'Copying adds nothing to your week and sends nothing. Your plan only changes after you mark it approved and apply it yourself.'),
+    h('div', { className: 'slip-actions' }, copy.button, copy.status),
+    h('div', { className: 'approval-steps' },
+      h('p', { id: 'approval-status', className: 'status-line' },
+        status === 'approved'
+          ? 'Approval recorded. Apply it when you are ready.'
+          : status === 'declined'
+            ? 'Marked declined. Your plan is unchanged.'
+            : 'Waiting for their answer. Your plan is unchanged.'),
+      h('div', { className: 'section-actions' },
         h('button', {
-          type: 'button',
-          className: 'button button-primary',
+          type: 'button', className: `button ${status === 'approved' ? 'button-primary' : 'button-secondary'}`,
+          'aria-pressed': String(status === 'approved'),
+          onClick: () => dispatch({ type: 'SET_APPROVAL_STATUS', repairId: selected.id, status: 'approved' })
+        }, 'Mark approved'),
+        h('button', {
+          type: 'button', className: 'link-button',
+          'aria-pressed': String(status === 'declined'),
+          onClick: () => dispatch({ type: 'SET_APPROVAL_STATUS', repairId: selected.id, status: 'declined' })
+        }, 'Mark declined'),
+        h('button', {
+          type: 'button', id: 'apply-approved', className: 'button button-primary',
+          disabled: status !== 'approved',
           onClick: () => dispatch({ type: 'APPLY_REPAIR', repairId: selected.id })
-        }, 'Apply verified change'),
-        h('p', { className: 'tiny-note' },
-          'Self-serve adjustment. Re-checked against all deadlines and protected sleep slots.'
-        )
+        }, 'Apply approved change')
       )
-    : h('div', { className: 'approval-workflow' },
-        h('div', { className: 'banner banner-warn' },
-          h('div', { className: 'banner-body' },
-            h('strong', {}, 'If approved (hypothetical preview): '),
-            'Your real plan, deadlines, and verdict do not change until you mark this request approved and apply it.'
-          )
-        ),
-        h('div', { className: 'request-draft-block' },
-          h('div', { className: 'draft-header' },
-            h('strong', {}, 'Request message draft (copy & send yourself — never sent automatically)'),
-            h('label', { className: 'inline-check' },
-              h('input', {
-                type: 'checkbox',
-                checked: state.draftIncludeWorkload,
-                onChange: ev => dispatch({
-                  type: 'SET_DRAFT_WORKLOAD',
-                  include: ev.currentTarget.checked
-                })
-              }),
-              h('span', {}, 'Include my workload summary')
-            )
-          ),
-          h('pre', { className: 'draft-box', tabindex: '0', 'aria-label': 'Draft approval request message' }, requestDraft),
-          h('button', {
-            type: 'button',
-            className: 'button button-outline',
-            onClick: async () => {
-              const copied = await copyToClipboard(requestDraft);
-              dispatch({
-                type: 'SET_NOTICE',
-                notice: copied
-                  ? 'Approval request copied to clipboard. It has NOT been sent.'
-                  : 'Could not access clipboard automatically; select and copy the draft text above.'
-              });
-            }
-          }, 'Copy approval request')
-        ),
-        h('div', { className: 'approval-decision-row' },
-          h('button', {
-            type: 'button',
-            className: `button ${approvalStatus === 'approved' ? 'button-primary' : 'button-secondary'}`,
-            'aria-pressed': String(approvalStatus === 'approved'),
-            onClick: () => dispatch({ type: 'SET_APPROVAL_STATUS', repairId: selected.id, status: 'approved' })
-          }, 'Mark approved'),
-          h('button', {
-            type: 'button',
-            className: `button ${approvalStatus === 'declined' ? 'button-danger-outline' : 'button-quiet'}`,
-            'aria-pressed': String(approvalStatus === 'declined'),
-            onClick: () => dispatch({ type: 'SET_APPROVAL_STATUS', repairId: selected.id, status: 'declined' })
-          }, 'Mark declined'),
-          h('button', {
-            type: 'button',
-            className: 'button button-primary',
-            disabled: approvalStatus !== 'approved',
-            onClick: () => dispatch({ type: 'APPLY_REPAIR', repairId: selected.id })
-          }, 'Apply approved change')
-        ),
-        h('p', { className: 'tiny-note' },
-          approvalStatus === 'approved'
-            ? 'Explicit approval recorded. Click "Apply approved change" to commit this change to your real plan.'
-            : approvalStatus === 'declined'
-              ? 'Request marked declined. Your real plan remains unchanged.'
-              : 'Waiting on confirmation. Real tasks and deadlines remain unchanged.'
-        )
-      );
-
-  return h('div', { className: 'strategy-preview panel' },
-    h('span', { className: 'preview-kicker' },
-      selected.needsApproval ? 'IF APPROVED · HYPOTHETICAL PREVIEW' : 'VERIFIED SELF-SERVE PREVIEW'
-    ),
-    h('h4', {}, selected.actions.map(action => action.label).join(' + ')),
-    h('p', { className: 'helper' }, selected.actions.map(action => action.description).join(' ')),
-    h('div', { className: 'preview-facts' },
-      h('div', { className: 'preview-fact' },
-        h('span', {}, selected.needsApproval ? 'Verdict if approved' : 'Verdict after change'),
-        h('strong', { className: `verdict-inline ${previewResultClass}` },
-          `${verdictIcon(selected.test.verdict)} ${verdictLabel(selected.test.verdict)}`
-        )
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, 'Typical tightest margin'),
-        h('strong', {}, typAfter ? `${fmtShortWeekday(typAfter.date)} ${fmtSignedHours(typAfter.marginHours)}` : 'n/a')
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, 'Conservative tightest margin'),
-        h('strong', {}, consAfter ? `${fmtShortWeekday(consAfter.date)} ${fmtSignedHours(consAfter.marginHours)}` : 'n/a')
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, 'Changes required'),
-        h('strong', {}, `${selected.actions.length} change${selected.actions.length === 1 ? '' : 's'}`)
-      )
-    ),
-    controls,
-    renderTimeline({
-      scheduleResult: selected.test.typical,
-      days: state.days,
-      sleep: state.sleep,
-      dayIndices: previewWeek.dayIndices,
-      tasks: selected.updated,
-      title: selected.needsApproval
-        ? `Week ${targetWeek + 1} schedule (If approved — preview only)`
-        : `Week ${targetWeek + 1} repaired schedule (preview only)`,
-      kicker: selected.needsApproval ? 'IF APPROVED TIMELINE' : 'REPAIRED TIMELINE PREVIEW',
-      isPreview: true
-    })
+    )
   );
 }
 
 /**
- * Renders Screen 3: Make It Work (Rescue Engine).
+ * Renders Reset: the first conflict, one verified change and what to do next.
  */
 export function renderRescueScreen(container, { state, derived, dispatch }) {
   const { evaluation, repairs } = derived;
-  const copy = buildVerdictCopy(evaluation, state.days);
-  const verdictCls = verdictClass(evaluation.verdict);
-  const titleByVerdict = {
-    infeasible: 'Smallest verified changes.',
-    'at-risk': 'Protect your buffer.',
-    feasible: 'No intervention needed.'
-  }[evaluation.verdict] ?? 'Rescue Engine';
-
-  const headerBar = h('section', { className: 'panel rescue-header' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('div', { className: 'panel-label' },
-          h('span', { className: 'panel-index' }, '03'),
-          'RESCUE ENGINE · MAKE IT WORK'
-        ),
-        h('h2', {}, titleByVerdict),
-        h('p', { className: 'helper' },
-          'Every candidate fix is re-run through the deadline-aware scheduler with your protected sleep window untouched.'
-        )
-      ),
-      h('span', { className: `verdict-badge ${verdictCls}` },
-        `${verdictIcon(evaluation.verdict)} ${verdictLabel(evaluation.verdict).toUpperCase()}`
-      )
-    ),
-    h('div', { className: 'rescue-summary-line' },
-      h('strong', {}, copy.headline),
-      ' ',
-      copy.body
-    ),
-    h('div', { className: 'quick-actions' },
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
-      }, '← Back to My Week'),
-      h('button', {
-        type: 'button',
-        className: 'button button-secondary',
-        disabled: state.appliedChanges.length === 0,
-        onClick: () => dispatch({ type: 'UNDO_LAST_REPAIR' })
-      }, state.appliedChanges.length
-        ? `Undo last change (${state.appliedChanges.length})`
-        : 'Undo last change'),
-      state.demo
-        ? h('button', {
-            type: 'button',
-            className: `button ${!state.fixed ? 'button-outline' : 'button-quiet'}`,
-            onClick: () => dispatch({ type: 'LOAD_DEMO', fixed: false })
-          }, 'Scenario A (Flexible)')
-        : null,
-      state.demo
-        ? h('button', {
-            type: 'button',
-            className: `button ${state.fixed ? 'button-outline' : 'button-quiet'}`,
-            onClick: () => dispatch({ type: 'LOAD_DEMO', fixed: true })
-          }, 'Scenario B (Fixed)')
-        : null
+  const parts = [];
+  parts.push(
+    h('header', { className: 'screen-intro' },
+      h('h1', { className: 'screen-title' }, 'Reset'),
+      h('p', { className: 'screen-lede' }, 'Get an overfilled week back under control.')
     )
   );
 
-  if (!repairs.length) {
-    const emptyMsg = emptyRepairMessage(evaluation.verdict);
-    const emptyPanel = h('section', { className: `panel empty-rescue ${verdictCls}` },
-      h('h3', {}, emptyMsg),
-      evaluation.verdict === 'infeasible'
-        ? h('p', { className: 'helper' },
-            'Mark a task flexible or droppable to give the Rescue Engine options, or coordinate an extension on a hard deadline.'
-          )
-        : evaluation.verdict === 'at-risk'
-          ? h('p', { className: 'helper' },
-              'Your typical estimates fit, and no single or pair adjustment improves the verdict further.'
-            )
-          : h('p', { className: 'helper' },
-              'Every deadline is already met with at least 1h of conservative slack. Protected sleep remains untouched.'
-            ),
-      h('button', {
-        type: 'button',
-        className: 'button button-outline',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
-      }, 'Return to My Week')
+  const history = renderHistory(state, dispatch);
+
+  if (evaluation.verdict === 'feasible') {
+    parts.push(
+      h('section', { id: 'reset-lead', className: 'verdict-block verdict-fits' },
+        h('p', { id: 'reset-status', className: 'verdict-word verdict-word-fits' }, 'Fits'),
+        h('h2', { className: 'verdict-headline' }, 'Nothing needs to move.'),
+        h('p', { className: 'verdict-detail' },
+          `${emptyRepairMessage('feasible')}. Every deadline is met with at least an hour to spare, even if things run long.`),
+        h('button', {
+          type: 'button', className: 'link-button',
+          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
+        }, 'Back to My week')
+      )
     );
-    container.replaceChildren(headerBar, emptyPanel, renderHistoryPanel(state, dispatch));
+    if (history) parts.push(history);
+    container.replaceChildren(...parts);
     return;
   }
 
-  const visibleRepairs = repairs.slice(0, 5);
-  const selected = visibleRepairs.find(item => item.id === state.selectedRepairId) ?? visibleRepairs[0];
+  const clause = evaluation.typical.feasible ? null : conflictClause(evaluation.typical, state.days);
+  const cost = deadlineCost(evaluation.typical, state.days);
+  const first = clause
+    ? `The first deadline at risk is ${dayLabel(clause.date)}. You're ${clause.text}.`
+    : `The first deadline to watch is ${dayLabel(cost.date)}, with ${hoursPhrase(Math.max(0, cost.marginHours))} to spare.`;
+  const tone = clause ? 'short' : 'tight';
 
-  const cards = visibleRepairs.map((repair, index) => {
-    const isSelected = repair.id === selected.id;
-    const record = repair.needsApproval
-      ? getApprovalRecord(state, repair.id, derived.fingerprint)
-      : null;
-    const approvalStatus = record?.status ?? 'pending';
-    const typAfter = deadlineCost(repair.test.typical, state.days);
-    const consAfter = deadlineCost(repair.test.conservative, state.days);
-    const changeCount = `${repair.actions.length} change${repair.actions.length === 1 ? '' : 's'}`;
-    const resultCls = verdictClass(repair.test.verdict);
+  const visible = repairs.slice(0, 5);
+  const selected = visible.find(item => item.id === state.selectedRepairId) ?? visible[0] ?? null;
 
-    return h('article', { className: `repair-card panel${isSelected ? ' selected' : ''}` },
-      h('div', { className: 'repair-card-head' },
-        h('span', { className: 'repair-num' }, String(index + 1).padStart(2, '0')),
-        h('div', { className: 'repair-card-title' },
-          h('h3', {}, repair.actions.map(action => action.label).join(' + ')),
-          h('p', { className: 'repair-desc' },
-            repair.actions.map(action => action.description).join(' ')
-          )
-        )
-      ),
-      h('div', { className: 'repair-badges' },
-        h('span', { className: `repair-status ${repair.needsApproval ? 'pending' : 'self-serve'}` },
-          approvalBadgeText(repair, approvalStatus)
-        ),
-        h('span', { className: 'pill' }, changeCount),
-        h('span', { className: `verdict-pill ${resultCls}` },
-          `${repair.needsApproval ? 'If approved: ' : 'After: '}${verdictIcon(repair.test.verdict)} ${verdictLabel(repair.test.verdict)}`
-        )
-      ),
-      h('div', { className: 'repair-margins' },
-        h('span', {}, formatMarginLine('Typical margin', typAfter)),
-        h('span', {}, formatMarginLine('Conservative margin', consAfter))
-      ),
-      h('div', { className: 'repair-card-actions' },
+  const lead = h('section', { id: 'reset-lead', className: `verdict-block verdict-${tone}` },
+    h('p', { id: 'reset-status', className: `verdict-word verdict-word-${tone}` }, verdictLabel(evaluation.verdict)),
+    h('h2', { className: 'verdict-headline reset-headline' }, first)
+  );
+
+  if (!selected) {
+    lead.append(
+      h('p', { className: 'verdict-detail' }, emptyRepairMessage(evaluation.verdict)),
+      h('p', { className: 'verdict-note' },
+        'Check what the app is counting: a missing busy block or wrong work hours can change this.'),
+      h('div', { className: 'section-actions' },
         h('button', {
-          type: 'button',
-          className: `button ${isSelected ? 'button-secondary' : 'button-outline'}`,
-          'aria-pressed': String(isSelected),
-          onClick: () => dispatch({ type: 'SELECT_REPAIR', repairId: repair.id })
-        }, isSelected ? 'Previewing' : 'Preview'),
-        !repair.needsApproval
-          ? h('button', {
-              type: 'button',
-              className: 'button button-primary',
-              onClick: () => dispatch({ type: 'APPLY_REPAIR', repairId: repair.id })
-            }, 'Apply')
-          : null
+          type: 'button', id: 'reset-to-week', className: 'button button-secondary',
+          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
+        }, 'Check what is counted'),
+        h('button', {
+          type: 'button', className: 'link-button',
+          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'settings' })
+        }, 'Change work hours')
       )
     );
-  });
+    parts.push(lead);
+    if (history) parts.push(history);
+    container.replaceChildren(...parts);
+    return;
+  }
 
-  container.replaceChildren(
-    headerBar,
-    h('div', { className: 'strategy-layout' },
-      h('div', { className: 'strategy-list', 'aria-label': 'Verified repair options' },
-        cards,
-        repairs.length > 5
-          ? h('p', { className: 'helper' }, `Showing top 5 of ${repairs.length} verified options.`)
-          : null
-      ),
-      renderPreviewPanel(selected, state, derived, dispatch)
-    ),
-    renderHistoryPanel(state, dispatch)
+  lead.append(
+    h('div', { className: 'lead-change' },
+      h('p', { className: 'eyebrow' }, 'One verified change'),
+      h('h3', {}, repairLabel(selected)),
+      h('span', { className: `option-tag ${selected.needsApproval ? 'needs-approval' : 'self-serve'}` },
+        selected.needsApproval ? 'If approved' : 'You can do this yourself'),
+      h('p', { className: 'option-result' }, effectText(selected, state)),
+      h('p', { className: 'option-note' }, 'Checked against every deadline with sleep protected.')
+    )
   );
+  if (!selected.needsApproval) {
+    lead.append(
+      h('div', { className: 'section-actions' },
+        h('button', {
+          type: 'button', id: 'apply-lead', className: 'button button-primary',
+          onClick: () => dispatch({ type: 'APPLY_REPAIR', repairId: selected.id })
+        }, 'Apply this change'))
+    );
+  }
+  parts.push(lead);
+  if (selected.needsApproval) parts.push(renderApproval(selected, state, derived, dispatch));
+
+  const others = visible.filter(item => item.id !== selected.id);
+  if (others.length) {
+    parts.push(
+      h('details', { className: 'quiet-details', id: 'reset-alternatives' },
+        h('summary', {}, `Other options (${others.length})`),
+        h('ul', { className: 'alt-list' },
+          others.map(repair =>
+            h('li', { className: 'repair-card' },
+              h('div', {},
+                h('strong', {}, repairLabel(repair)),
+                ' ',
+                h('span', { className: `option-tag ${repair.needsApproval ? 'needs-approval' : 'self-serve'}` },
+                  repair.needsApproval ? 'If approved' : 'You can do this yourself'),
+                h('p', { className: 'option-note' }, effectText(repair, state))),
+              h('button', {
+                type: 'button', className: 'link-button',
+                onClick: () => dispatch({ type: 'SELECT_REPAIR', repairId: repair.id })
+              }, 'Use this instead'))))
+      )
+    );
+  }
+
+  const week = weekView(state.days, previewWeekIndex(selected, derived));
+  parts.push(
+    h('details', { className: 'quiet-details', id: 'reset-preview' },
+      h('summary', {}, 'See the schedule after this change'),
+      renderTimeline({
+        scheduleResult: selected.test.typical,
+        days: state.days,
+        sleep: state.sleep,
+        dayIndices: week.dayIndices,
+        tasks: selected.updated,
+        title: selected.needsApproval ? 'Schedule if approved (preview only)' : 'Schedule after this change (preview only)',
+        kicker: 'PREVIEW',
+        isPreview: true
+      })
+    )
+  );
+  if (history) parts.push(history);
+  container.replaceChildren(...parts);
 }

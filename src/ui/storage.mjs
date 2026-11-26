@@ -1,6 +1,6 @@
 export const STORAGE_KEY = 'the25thhour.v1';
 export const SCHEMA_VERSION = 1;
-export const VALID_SCREENS = Object.freeze(['week', 'check', 'rescue', 'feedback', 'settings']);
+export const VALID_SCREENS = Object.freeze(['home', 'week', 'check', 'rescue', 'feedback', 'settings']);
 
 const isPlainObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -30,7 +30,7 @@ export function migrate(value) {
 
   return {
     schemaVersion: SCHEMA_VERSION,
-    screen: VALID_SCREENS.includes(value.screen) ? value.screen : 'week',
+    screen: VALID_SCREENS.includes(value.screen) ? value.screen : 'home',
     setupComplete: Boolean(value.setupComplete),
     demo: value.demo !== undefined ? Boolean(value.demo) : true,
     fixed: Boolean(value.fixed),
@@ -55,6 +55,8 @@ export function migrate(value) {
     lastEditedAt: typeof value.lastEditedAt === 'string' ? value.lastEditedAt : null,
     unresolvedConflict: Boolean(value.unresolvedConflict),
     draftIncludeWorkload: Boolean(value.draftIncludeWorkload),
+    displayName: typeof value.displayName === 'string' ? value.displayName.slice(0, 40) : '',
+    personalBackup: isPlainObject(value.personalBackup) && Array.isArray(value.personalBackup.days) ? value.personalBackup : null,
     skippedSleepPromptDate: typeof value.skippedSleepPromptDate === 'string' ? value.skippedSleepPromptDate : null,
     notice: ''
   };

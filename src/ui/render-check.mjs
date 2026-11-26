@@ -1,19 +1,20 @@
 import { defaultRange, roundHalfHour } from '../engine/commitments.mjs';
 import { deadlineCost, verdictText } from '../engine/evaluate.mjs';
 import { getEstimateSuggestion } from '../engine/feedback.mjs';
-import { draftApprovalRequest } from '../engine/repairs.mjs';
 import { isHalfHour, TASK_TYPES } from '../engine/scheduler.mjs';
 import {
-  buildVerdictCopy,
+  analyzeRequest,
+  buildReply,
+  dayLabel,
+  describeBookedWeek,
+  hoursPhrase
+} from './check-model.mjs';
+import {
+  copyToClipboard,
   fmtHours,
-  fmtShortDate,
-  fmtShortWeekday,
   fmtSignedHours,
   h,
   taskTag,
-  taskTagLabel,
-  verdictClass,
-  verdictIcon,
   verdictLabel
 } from './dom.mjs';
 import { findSelfServeAcceptRepair } from './state.mjs';
@@ -28,43 +29,87 @@ const TASK_TYPE_LABELS = {
   club: { singular: 'club task', plural: 'club tasks', label: 'Club' }
 };
 
-// Preserves in-progress draft inputs across re-renders until form submission succeeds or resets.
-let formDraft = null;
 
-function defaultDeadlineDate(days, weekIndex = 0) {
-  if (!days.length) return '';
-  const thursdayIndex = Math.min(days.length - 1, weekIndex * 7 + 3);
-  return days[thursdayIndex]?.date ?? days[0].date;
+// ---------------------------------------------------------------------------
+// In-memory UI state. None of this is persisted and none of it is engine data:
+// it only keeps what the student is typing across re-renders.
+// ---------------------------------------------------------------------------
+
+// Form fields being typed (new request) or edited (pending request).
+let formDraft = null;
+// True while the pending request is open for editing.
+let editing = false;
+// Per-request reply/smaller-offer state, keyed by proposal id.
+const requestUi = new Map();
+// One-shot flags used to move focus and announce the verdict after a check.
+let pendingFocus = false;
+let focusSelectorAfterRender = null;
+let bookedOpen = false;
+let moreOptionsOpen = false;
+
+function getUi(proposalId) {
+  if (!requestUi.has(proposalId)) {
+    requestUi.set(proposalId, {
+      text: '',
+      autoText: '',
+      touched: false,
+      baseSignature: '',
+      variant: 'decline',
+      smaller: null
+    });
+  }
+  return requestUi.get(proposalId);
 }
 
-function getFormDraft(state) {
+function resetRequestUi() {
+  requestUi.clear();
+  editing = false;
+}
+
+function emptyDraft(state) {
+  return {
+    anchor: state.days[0]?.date ?? '',
+    title: '',
+    likely: '',
+    min: '',
+    max: '',
+    // No default weekday: the student picks the real due date.
+    deadline: '',
+    tag: 'must-keep',
+    latestDate: '',
+    earliestDate: '',
+    type: 'other'
+  };
+}
+
+function draftFromProposal(proposal, state) {
+  const range = defaultRange(proposal.likely);
+  const date = index => state.days[index]?.date ?? '';
+  return {
+    anchor: state.days[0]?.date ?? '',
+    title: proposal.title,
+    likely: String(proposal.likely),
+    min: proposal.min === range.min ? '' : String(proposal.min),
+    max: proposal.max === range.max ? '' : String(proposal.max),
+    deadline: date(proposal.targetDay),
+    tag: taskTag(proposal),
+    latestDate: proposal.flexible ? date(proposal.hardDay) : '',
+    earliestDate: proposal.earliestDay > 0 ? date(proposal.earliestDay) : '',
+    type: proposal.type ?? 'other'
+  };
+}
+
+function getFormDraft(state, pending) {
   const firstDate = state.days[0]?.date ?? '';
-  const lastDate = state.days[state.days.length - 1]?.date ?? '';
-  const proposalCount = state.proposals.length;
-  if (!formDraft || formDraft.anchor !== firstDate || formDraft.proposalCount !== proposalCount) {
-    formDraft = {
-      anchor: firstDate,
-      proposalCount,
-      title: '',
-      likely: '',
-      min: '',
-      max: '',
-      deadline: defaultDeadlineDate(state.days, state.weekIndex),
-      tag: 'must-keep',
-      latestDate: '',
-      earliestDate: '',
-      type: 'other'
-    };
-  }
-  if (formDraft.deadline < firstDate || formDraft.deadline > lastDate) {
-    formDraft.deadline = defaultDeadlineDate(state.days, state.weekIndex);
+  if (!formDraft || formDraft.anchor !== firstDate) {
+    formDraft = editing && pending ? draftFromProposal(pending, state) : emptyDraft(state);
   }
   return formDraft;
 }
 
-export function resetCheckFormDraft(state) {
+export function resetCheckFormDraft() {
   formDraft = null;
-  if (state) getFormDraft(state);
+  resetRequestUi();
 }
 
 /**
@@ -218,306 +263,40 @@ export function buildCommitmentSummary(beforeOutcome, afterOutcome, proposals, d
   };
 }
 
-function renderOutcomeCard({ title, badgeText, beforeOutcome, afterOutcome, proposals, state, dispatch }) {
-  const summary = buildCommitmentSummary(beforeOutcome, afterOutcome, proposals, state.days);
-  const beforeCls = verdictClass(summary.beforeVerdict);
-  const afterCls = verdictClass(summary.afterVerdict);
-  const proposalIds = proposals.map(task => task.id);
-  const canPlainAccept = afterOutcome.evaluation.typical.feasible;
-  const selfServe = summary.selfServeRepair;
-  const top = summary.topRepair;
-  const isMulti = proposals.length > 1;
 
-  const proposalMetaList = proposals.map(task => {
-    const tag = taskTag(task);
-    const targetDate = state.days[task.targetDay]?.date ?? '';
-    const hardDate = state.days[task.hardDay]?.date ?? '';
-    const earliestDate = state.days[task.earliestDay]?.date ?? '';
-    const typeLabel = (TASK_TYPE_LABELS[task.type] ?? TASK_TYPE_LABELS.other).label;
-    const deadlineDetail = task.hardDay > task.targetDay
-      ? `${fmtShortWeekday(targetDate)} ${fmtShortDate(targetDate)} (${targetDate}) target · flexible up to ${fmtShortWeekday(hardDate)} ${fmtShortDate(hardDate)} (${hardDate})`
-      : `${fmtShortWeekday(targetDate)} ${fmtShortDate(targetDate)} (${targetDate})`;
-    return h('li', { className: 'proposal-meta-item' },
-      h('div', {},
-        h('strong', {}, task.title),
-        ' · ',
-        h('span', {}, `${fmtHours(task.likely)} typical (${fmtHours(task.min)}–${fmtHours(task.max)} range)`),
-        ' · ',
-        h('span', {}, `Due ${deadlineDetail}`),
-        earliestDate && task.earliestDay > 0 ? h('span', {}, ` · Starts ${earliestDate}`) : null,
-        h('span', {}, ` · Type: ${typeLabel}`)
-      ),
-      h('span', { className: `task-pill ${tag}` }, taskTagLabel(tag))
-    );
-  });
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
 
-  const repairSection = afterOutcome.evaluation.verdict === 'feasible'
-    ? h('div', { className: 'check-repair-box good' },
-        h('strong', {}, '✓ No schedule repair required: '),
-        'Every deadline is met even if tasks run long, with at least 1h of conservative buffer.'
-      )
-    : top
-      ? h('div', { className: `check-repair-box ${top.needsApproval ? 'risk' : 'good'}` },
-          h('div', { className: 'check-repair-head' },
-            h('strong', {}, 'Top verified repair recommendation'),
-            h('span', { className: `repair-status ${top.needsApproval ? 'pending' : 'self-serve'}` },
-              top.needsApproval ? 'Needs approval (pending)' : 'Self-serve'
-            )
-          ),
-          h('p', { className: 'check-repair-title' },
-            `${top.actions.map(action => action.label).join(' + ')} → ${verdictIcon(top.test.verdict)} ${verdictLabel(top.test.verdict)}`
-          ),
-          h('p', { className: 'helper' }, top.actions.map(action => action.description).join(' ')),
-          top.needsApproval
-            ? h('div', { className: 'approval-guard-note' },
-                h('p', { className: 'tiny-note' },
-                  'Guardrail: This top repair requires external approval and will never be auto-applied. You can preview its request draft below or manage approvals in Make It Work after deciding.'
-                ),
-                h('pre', { className: 'draft-box' }, draftApprovalRequest(top, state.days))
-              )
-            : null,
-          selfServe && selfServe.id !== top.id
-            ? h('p', { className: 'tiny-note' },
-                `Self-serve alternative available for one-click acceptance: ${selfServe.actions.map(action => action.label).join(' + ')} (Result: ${verdictLabel(selfServe.test.verdict)}).`
-              )
-            : null
-        )
-      : h('div', { className: 'check-repair-box alert' },
-          h('strong', {}, '✕ No verified repair available: '),
-          "No verified fix with the changes you've allowed. This is a capacity problem, not a scheduling problem."
-        );
-
-  const selfServeButtonLabel = selfServe
-    ? `Accept${isMulti ? ' all' : ''} with suggested change (${selfServe.actions.map(action => action.label).join(' + ')})`
-    : `Accept${isMulti ? ' all' : ''} with suggested change (none available)`;
-
-  return h('article', { className: 'panel proposal-outcome-card' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('span', { className: 'panel-label' }, badgeText),
-        h('h3', {}, title)
-      ),
-      h('span', { className: `verdict-badge ${afterCls}` },
-        `With commitment: ${verdictIcon(summary.afterVerdict)} ${verdictLabel(summary.afterVerdict).toUpperCase()}`
-      )
-    ),
-
-    h('ul', { className: 'proposal-meta-list' }, proposalMetaList),
-
-    // 1 & 2. Side-by-side Without vs With Feasibility Verdicts
-    h('div', { className: 'before-after-grid' },
-      h('div', { className: `before-after-box ${beforeCls}` },
-        h('div', { className: 'verdict-top' },
-          h('span', {}, '1 · WITHOUT THIS COMMITMENT'),
-          h('span', { className: `verdict-badge ${beforeCls}` },
-            `${verdictIcon(summary.beforeVerdict)} ${verdictLabel(summary.beforeVerdict).toUpperCase()}`
-          )
-        ),
-        h('strong', { className: 'ba-headline' }, buildVerdictCopy(beforeOutcome.evaluation, state.days).headline),
-        h('p', {}, summary.withoutLine)
-      ),
-      h('div', { className: `before-after-box ${afterCls}` },
-        h('div', { className: 'verdict-top' },
-          h('span', {}, '2 · WITH THIS COMMITMENT'),
-          h('span', { className: `verdict-badge ${afterCls}` },
-            `${verdictIcon(summary.afterVerdict)} ${verdictLabel(summary.afterVerdict).toUpperCase()}`
-          )
-        ),
-        h('strong', { className: 'ba-headline' }, buildVerdictCopy(afterOutcome.evaluation, state.days).headline),
-        h('p', {}, summary.withLine)
-      )
-    ),
-
-    // 3, 4, 5, 6. Key Numbers Breakdown Grid
-    h('div', { className: 'impact-metrics-grid' },
-      h('div', { className: 'preview-fact' },
-        h('span', {}, '3 · Additional workload'),
-        h('strong', {}, `+${fmtHours(summary.addedLikely)} typical`),
-        h('small', {}, `Range: ${fmtHours(summary.addedMin)}–${fmtHours(summary.addedMax)}`)
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, '4 · Binding deadline'),
-        h('strong', {}, summary.bindingWeekday ? `${summary.bindingWeekday} (${fmtShortDate(summary.bindingDate)})` : 'None'),
-        h('small', {}, summary.bindingDate || 'No deadlines')
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, '5 · Required vs. available'),
-        h('strong', {}, `${fmtHours(summary.requiredHours)} due / ${fmtHours(summary.availableHours)} free`),
-        h('small', {}, summary.bindingWeekday ? `Cumulative through ${summary.bindingWeekday}` : 'Cumulative')
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, '6 · Shortfall / margin'),
-        h('strong', { className: summary.shortfallHours > 0 ? 'not-ok' : 'ok' },
-          summary.shortfallHours > 0
-            ? `−${fmtHours(summary.shortfallHours)} short`
-            : `${fmtSignedHours(summary.marginHours)} spare`
-        ),
-        h('small', {}, `Conservative: ${fmtSignedHours(summary.conservativeMarginHours)}`)
-      )
-    ),
-
-    // Plain-language Cost Statement (SPEC section 7.1)
-    h('div', { className: 'cost-statement-box' },
-      h('span', { className: 'field-eyebrow' }, 'PLAIN-LANGUAGE COST STATEMENT'),
-      h('p', {}, h('strong', {}, 'Without this: '), summary.withoutLine),
-      h('p', {}, h('strong', {}, 'With this: '), summary.withLine),
-      summary.tasksDueLine ? h('p', {}, summary.tasksDueLine) : null,
-      h('p', {}, summary.topRepairLine)
-    ),
-
-    // 7. Top Verified Repair Recommendation
-    repairSection,
-
-    // Four Decision Actions
-    h('div', { className: 'decision-actions' },
-      h('button', {
-        type: 'button',
-        className: 'button button-primary',
-        disabled: !canPlainAccept,
-        title: canPlainAccept
-          ? 'Add this commitment directly to your schedule'
-          : 'Typical estimates miss a deadline; use "Accept with suggested change" or "Accept anyway"',
-        onClick: () => dispatch({
-          type: 'ACCEPT_PROPOSAL',
-          proposalIds,
-          mode: 'accept'
-        })
-      }, isMulti ? 'Accept all' : 'Accept'),
-
-      h('button', {
-        type: 'button',
-        className: 'button button-secondary',
-        disabled: !selfServe,
-        onClick: () => dispatch({
-          type: 'ACCEPT_PROPOSAL',
-          proposalIds,
-          mode: 'accept-repair',
-          repairId: selfServe?.id
-        })
-      }, selfServeButtonLabel),
-
-      h('button', {
-        type: 'button',
-        className: 'button button-outline',
-        onClick: () => dispatch({
-          type: 'ACCEPT_PROPOSAL',
-          proposalIds,
-          mode: 'override'
-        })
-      }, isMulti ? 'Accept all anyway' : 'Accept anyway'),
-
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({
-          type: 'DISCARD_PROPOSAL',
-          proposalIds
-        })
-      }, isMulti ? 'Not now (discard all)' : 'Not now')
-    ),
-    !canPlainAccept
-      ? h('p', { className: 'tiny-note' },
-          'Note: "Accept" is disabled when typical estimates miss a deadline. You may apply the verified self-serve change above, or choose "Accept anyway" (which leaves the unresolved conflict visible on My Week without touching protected sleep).'
-        )
-      : null
-  );
+function announce(text) {
+  const node = document.getElementById('sr-announcer');
+  if (!node) return;
+  node.textContent = '';
+  setTimeout(() => { node.textContent = text; }, 60);
 }
 
-/**
- * Renders Screen 2: Should I Say Yes? (F1 Commitment Check).
- */
-export function renderCheckScreen(container, { state, derived, dispatch }) {
-  const draft = getFormDraft(state);
+function renderExampleLine(state) {
+  if (!state.demo) return null;
+  const first = state.days[0]?.date;
+  return h('p', { id: 'example-line', className: 'example-line' },
+    `Example data: a sample week from ${first ? dayLabel(first) : ''}, not yours.`);
+}
+
+function renderRequestForm({ state, derived, dispatch, pending, rerender }) {
+  const draft = getFormDraft(state, pending);
   const firstDate = state.days[0]?.date ?? '';
   const lastDate = state.days[state.days.length - 1]?.date ?? '';
-  const copy = buildVerdictCopy(derived.evaluation, state.days);
-  const verdictCls = verdictClass(derived.evaluation.verdict);
-
-  const headerBar = h('section', { className: 'panel check-header' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('div', { className: 'panel-label' },
-          h('span', { className: 'panel-index' }, '02'),
-          'COMMITMENT CHECK · SHOULD I SAY YES?'
-        ),
-        h('h2', {}, 'Know what your next yes will cost.'),
-        h('p', { className: 'helper' },
-          'Enter a potential commitment in under ten seconds. Nothing joins your schedule until you choose an acceptance option.'
-        )
-      ),
-      h('span', { className: `verdict-badge ${verdictCls}` },
-        `Current plan: ${verdictIcon(derived.evaluation.verdict)} ${verdictLabel(derived.evaluation.verdict).toUpperCase()}`
-      )
-    ),
-    h('div', { className: 'rescue-summary-line' },
-      h('strong', {}, 'Current baseline plan: '),
-      `${copy.headline} ${copy.body}`
-    ),
-    h('div', { className: 'quick-actions' },
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
-      }, '← Back to My Week'),
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-      }, 'Open Make It Work'),
-      state.demo
-        ? h('button', {
-            type: 'button',
-            className: 'button button-outline',
-            onClick: () => dispatch({
-              type: 'UPDATE_DEMO_RESEARCH',
-              includeResearch: !state.includeResearch,
-              researchHours: state.researchHours
-            })
-          }, state.includeResearch
-            ? 'Exclude built-in 5h demo research (start from 13h feasible week)'
-            : 'Re-include built-in 5h demo research')
-        : null
-    )
-  );
-
-  const unresolvedBanner = state.unresolvedConflict && !derived.evaluation.typical.feasible
-    ? h('div', { className: 'banner banner-alert', role: 'status' },
-        h('div', { className: 'banner-body' },
-          h('strong', {}, 'Unresolved deadline conflict on your plan: '),
-          'You previously accepted an infeasible commitment with "Accept anyway". The conflict remains visible until resolved.'
-        ),
-        h('button', {
-          type: 'button',
-          className: 'button button-outline button-sm',
-          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-        }, 'Resolve in Make It Work')
-      )
-    : null;
+  const isEdit = Boolean(editing && pending);
 
   const suggestionBox = h('div', { id: 'estimate-suggestion', className: 'suggestion-slot' });
   const rangePreview = h('small', { id: 'range-preview', className: 'field-hint' });
-  const latestGroup = h('div', {
-    id: 'latest-date-group',
-    className: 'form-field',
-    hidden: draft.tag !== 'flexible'
-  });
-  const formErrorBanner = h('p', {
-    id: 'proposal-error',
-    className: 'form-error-banner',
-    role: 'alert',
-    hidden: true
-  });
-
+  const latestGroup = h('div', { id: 'latest-date-group', className: 'form-field', hidden: draft.tag !== 'flexible' });
+  const formErrorBanner = h('p', { id: 'proposal-error', className: 'form-error-banner', role: 'alert', hidden: true });
   const fieldErrorNodes = {};
   const inputNodes = {};
 
   function makeFieldError(name) {
-    const node = h('small', {
-      id: `error-${name}`,
-      className: 'field-error',
-      role: 'alert',
-      hidden: true
-    });
+    const node = h('small', { id: `error-${name}`, className: 'field-error', role: 'alert', hidden: true });
     fieldErrorNodes[name] = node;
     return node;
   }
@@ -548,6 +327,11 @@ export function renderCheckScreen(container, { state, derived, dispatch }) {
     if (input) {
       input.setAttribute('aria-invalid', 'true');
       if (errNode) input.setAttribute('aria-describedby', errNode.id);
+      if (['min', 'max', 'tag', 'latestDate', 'earliestDate', 'type'].includes(fieldName)) {
+        const details = document.getElementById('more-options');
+        if (details) details.open = true;
+      }
+      input.focus();
     }
     formErrorBanner.textContent = message;
     formErrorBanner.hidden = false;
@@ -557,9 +341,9 @@ export function renderCheckScreen(container, { state, derived, dispatch }) {
     const likelyNum = Number(draft.likely);
     if (isHalfHour(likelyNum) && likelyNum >= 0.5 && likelyNum <= 40) {
       const range = defaultRange(likelyNum);
-      rangePreview.textContent = `Leave min/max blank to use D3 default range: ${fmtHours(range.min)} – ${fmtHours(range.max)} (0.8× to 1.4× typical, rounded to 0.5h).`;
+      rangePreview.textContent = `Leave these blank and the check uses ${fmtHours(range.min)} as the quick case and ${fmtHours(range.max)} as the slow case.`;
     } else {
-      rangePreview.textContent = 'Optional. Leave blank to auto-fill 0.8× (min, at least 0.5h) and 1.4× (max) rounded to 0.5h.';
+      rangePreview.textContent = 'Leave these blank and the check works out a quick case and a slow case from your estimate.';
     }
 
     const flexible = draft.tag === 'flexible';
@@ -586,164 +370,125 @@ export function renderCheckScreen(container, { state, derived, dispatch }) {
         )
       );
     } else if (info.status === 'learning') {
-      suggestionBox.replaceChildren(
-        h('p', { className: 'field-hint learning-note' }, info.text)
-      );
+      suggestionBox.replaceChildren(h('p', { className: 'field-hint learning-note' }, info.text));
     } else {
       suggestionBox.replaceChildren();
     }
   }
 
+  const on = (name, extra) => ev => {
+    draft[name] = ev.currentTarget.value;
+    clearErrors();
+    extra?.();
+  };
+
   inputNodes.title = h('input', {
-    id: 'proposal-title',
-    name: 'title',
-    type: 'text',
-    maxlength: '80',
-    required: true,
-    value: draft.title,
-    placeholder: 'e.g. Robotics Club Perception Module',
-    onInput: ev => {
-      draft.title = ev.currentTarget.value;
-      clearErrors();
-    }
+    id: 'proposal-title', name: 'title', type: 'text', maxlength: '80', required: true,
+    autocomplete: 'off', value: draft.title,
+    placeholder: 'e.g. Help with the club poster',
+    onInput: on('title')
   });
-
   inputNodes.likely = h('input', {
-    id: 'proposal-likely',
-    name: 'likely',
-    type: 'number',
-    min: '0.5',
-    max: '40',
-    step: '0.5',
-    required: true,
-    value: draft.likely,
-    placeholder: 'e.g. 5',
-    onInput: ev => {
-      draft.likely = ev.currentTarget.value;
-      clearErrors();
-      updateDynamicHelpers();
-    }
+    id: 'proposal-likely', name: 'likely', type: 'number', inputmode: 'decimal',
+    min: '0.5', max: '40', step: '0.5', required: true, value: draft.likely,
+    placeholder: 'e.g. 4',
+    onInput: on('likely', updateDynamicHelpers)
   });
-
-  inputNodes.min = h('input', {
-    id: 'proposal-min',
-    name: 'min',
-    type: 'number',
-    min: '0',
-    max: '40',
-    step: '0.5',
-    value: draft.min,
-    placeholder: 'Auto (0.8×)',
-    onInput: ev => {
-      draft.min = ev.currentTarget.value;
-      clearErrors();
-    }
-  });
-
-  inputNodes.max = h('input', {
-    id: 'proposal-max',
-    name: 'max',
-    type: 'number',
-    min: '0',
-    max: '60',
-    step: '0.5',
-    value: draft.max,
-    placeholder: 'Auto (1.4×)',
-    onInput: ev => {
-      draft.max = ev.currentTarget.value;
-      clearErrors();
-    }
-  });
-
   inputNodes.deadline = h('input', {
-    id: 'proposal-deadline',
-    name: 'deadline',
-    type: 'date',
-    min: firstDate,
-    max: lastDate,
-    required: true,
-    value: draft.deadline,
-    onInput: ev => {
-      draft.deadline = ev.currentTarget.value;
-      clearErrors();
-    }
+    id: 'proposal-deadline', name: 'deadline', type: 'date',
+    min: firstDate, max: lastDate, required: true, value: draft.deadline,
+    onInput: on('deadline')
   });
-
+  inputNodes.min = h('input', {
+    id: 'proposal-min', name: 'min', type: 'number', inputmode: 'decimal',
+    min: '0', max: '40', step: '0.5', value: draft.min, placeholder: 'Automatic',
+    onInput: on('min')
+  });
+  inputNodes.max = h('input', {
+    id: 'proposal-max', name: 'max', type: 'number', inputmode: 'decimal',
+    min: '0', max: '60', step: '0.5', value: draft.max, placeholder: 'Automatic',
+    onInput: on('max')
+  });
   inputNodes.tag = h('select', {
-    id: 'proposal-tag',
-    name: 'tag',
-    onChange: ev => {
-      draft.tag = ev.currentTarget.value;
-      clearErrors();
-      updateDynamicHelpers();
-    }
+    id: 'proposal-tag', name: 'tag', onChange: on('tag', updateDynamicHelpers)
   },
-    h('option', { value: 'must-keep', selected: draft.tag === 'must-keep' }, 'must-keep — Must-keep (priority 1, fixed target)'),
-    h('option', { value: 'flexible', selected: draft.tag === 'flexible' }, 'flexible — Flexible (soft target can move to latest date)'),
-    h('option', { value: 'droppable', selected: draft.tag === 'droppable' }, 'droppable — Droppable (optional commitment)')
+    h('option', { value: 'must-keep', selected: draft.tag === 'must-keep' }, 'Must do, fixed deadline'),
+    h('option', { value: 'flexible', selected: draft.tag === 'flexible' }, 'Flexible, can slip to a later day'),
+    h('option', { value: 'droppable', selected: draft.tag === 'droppable' }, 'Optional, I could drop it')
   );
-
   inputNodes.latestDate = h('input', {
-    id: 'proposal-latest',
-    name: 'latestDate',
-    type: 'date',
-    min: firstDate,
-    max: lastDate,
-    value: draft.latestDate,
-    onInput: ev => {
-      draft.latestDate = ev.currentTarget.value;
-      clearErrors();
-    }
+    id: 'proposal-latest', name: 'latestDate', type: 'date',
+    min: firstDate, max: lastDate, value: draft.latestDate,
+    onInput: on('latestDate')
   });
-
   inputNodes.earliestDate = h('input', {
-    id: 'proposal-earliest',
-    name: 'earliestDate',
-    type: 'date',
-    min: firstDate,
-    max: lastDate,
-    value: draft.earliestDate,
-    onInput: ev => {
-      draft.earliestDate = ev.currentTarget.value;
-      clearErrors();
-    }
+    id: 'proposal-earliest', name: 'earliestDate', type: 'date',
+    min: firstDate, max: lastDate, value: draft.earliestDate,
+    onInput: on('earliestDate')
   });
-
   inputNodes.type = h('select', {
-    id: 'proposal-type',
-    name: 'type',
-    onChange: ev => {
-      draft.type = ev.currentTarget.value;
-      clearErrors();
-      updateDynamicHelpers();
-    }
+    id: 'proposal-type', name: 'type', onChange: on('type', updateDynamicHelpers)
   },
     TASK_TYPES.map(typeKey =>
       h('option', { value: typeKey, selected: draft.type === typeKey },
-        `${typeKey} — ${(TASK_TYPE_LABELS[typeKey] ?? TASK_TYPE_LABELS.other).label}`
-      )
+        (TASK_TYPE_LABELS[typeKey] ?? TASK_TYPE_LABELS.other).label)
     )
   );
 
   latestGroup.replaceChildren(
-    h('label', { for: 'proposal-latest' }, 'Latest acceptable date (hard deadline, optional)'),
+    h('label', { for: 'proposal-latest' }, 'Latest day it could be done (optional)'),
     inputNodes.latestDate,
-    h('small', { className: 'field-hint' },
-      'If left blank for a flexible commitment, defaults to deadline + 1 day (capped at the last loaded day).'
-    ),
+    h('small', { className: 'field-hint' }, 'Left blank, a flexible request can slip by one day.'),
     makeFieldError('latestDate')
   );
 
   updateDynamicHelpers();
 
-  const formPanel = h('section', { className: 'panel check-form-panel' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('span', { className: 'panel-label' }, 'NEW COMMITMENT PROPOSAL'),
-        h('h3', {}, 'Should I say yes to this?')
+  const moreOptions = h('details', {
+    id: 'more-options',
+    className: 'more-options',
+    open: moreOptionsOpen,
+    onToggle: ev => { moreOptionsOpen = ev.currentTarget.open; }
+  },
+    h('summary', {}, 'More options'),
+    h('div', { className: 'more-options-body' },
+      h('div', { className: 'form-grid-two' },
+        h('div', { className: 'form-field' },
+          h('label', { for: 'proposal-min' }, 'Quickest it could take (hours)'),
+          inputNodes.min,
+          makeFieldError('min')
+        ),
+        h('div', { className: 'form-field' },
+          h('label', { for: 'proposal-max' }, 'Longest it could take (hours)'),
+          inputNodes.max,
+          makeFieldError('max')
+        )
       ),
-      h('span', { className: 'pill' }, `Loaded dates: ${firstDate} to ${lastDate}`)
-    ),
+      rangePreview,
+      h('div', { className: 'form-grid-two' },
+        h('div', { className: 'form-field' },
+          h('label', { for: 'proposal-tag' }, 'How firm is it?'),
+          inputNodes.tag,
+          makeFieldError('tag')
+        ),
+        h('div', { className: 'form-field' },
+          h('label', { for: 'proposal-type' }, 'What kind of task is it?'),
+          inputNodes.type,
+          h('small', { className: 'field-hint' }, 'Helps the app learn how long your tasks really take.'),
+          makeFieldError('type')
+        )
+      ),
+      latestGroup,
+      h('div', { className: 'form-field' },
+        h('label', { for: 'proposal-earliest' }, 'Can\'t start before (optional)'),
+        inputNodes.earliestDate,
+        h('small', { className: 'field-hint' }, `Left blank, work can start from the first loaded day (${dayLabel(firstDate)}).`),
+        makeFieldError('earliestDate')
+      )
+    )
+  );
+
+  return h('section', { className: 'check-form-panel', 'aria-label': isEdit ? 'Edit your request' : 'New request' },
     h('form', {
       id: 'proposal-form',
       className: 'commitment-form',
@@ -758,150 +503,683 @@ export function renderCheckScreen(container, { state, derived, dispatch }) {
           max: inputNodes.max.value,
           deadline: inputNodes.deadline.value,
           tag: inputNodes.tag.value,
-          latestDate: inputNodes.tag.value === 'flexible' ? inputNodes.latestDate.value : inputNodes.latestDate.value,
+          latestDate: inputNodes.latestDate.value,
           earliestDate: inputNodes.earliestDate.value,
           type: inputNodes.type.value
         };
         try {
-          dispatch({ type: 'ADD_PROPOSAL', fields }, { rethrow: true });
+          if (isEdit) {
+            const ui = getUi(pending.id);
+            ui.smaller = null;
+            pendingFocus = true;
+            // Leave edit mode first: dispatch re-renders synchronously.
+            editing = false;
+            const keptDraft = formDraft;
+            formDraft = null;
+            try {
+              dispatch({ type: 'UPDATE_PROPOSAL', proposalId: pending.id, fields }, { rethrow: true });
+            } catch (failure) {
+              editing = true;
+              formDraft = keptDraft;
+              throw failure;
+            }
+          } else {
+            resetRequestUi();
+            pendingFocus = true;
+            dispatch({ type: 'ADD_PROPOSAL', fields }, { rethrow: true });
+            formDraft = null;
+          }
         } catch (error) {
-          showValidationError(error?.message || 'Check the entered commitment details.', fields);
+          pendingFocus = false;
+          showValidationError(error?.message || 'Check the details you entered.', fields);
+        }
+      }
+    },
+      h('div', { className: 'form-field' },
+        h('label', { for: 'proposal-title' }, 'What are you being asked to do?'),
+        inputNodes.title,
+        makeFieldError('title')
+      ),
+      h('div', { className: 'form-grid-two' },
+        h('div', { className: 'form-field' },
+          h('label', { for: 'proposal-likely' }, 'About how many hours will it take?'),
+          inputNodes.likely,
+          makeFieldError('likely'),
+          suggestionBox
+        ),
+        h('div', { className: 'form-field' },
+          h('label', { for: 'proposal-deadline' }, 'When is it due?'),
+          inputNodes.deadline,
+          makeFieldError('deadline')
+        )
+      ),
+      moreOptions,
+      formErrorBanner,
+      h('div', { className: 'form-submit-row' },
+        h('button', { type: 'submit', className: 'button button-primary button-large' },
+          isEdit ? 'Check again' : 'Check it'),
+        isEdit
+          ? h('button', {
+              type: 'button',
+              className: 'link-button',
+              onClick: () => {
+                editing = false;
+                formDraft = null;
+                rerender();
+              }
+            }, 'Cancel')
+          : null
+      )
+    )
+  );
+}
+
+function renderRequestSummary({ proposal, state, rerender }) {
+  const dueDate = state.days[proposal.targetDay]?.date;
+  return h('section', { className: 'request-summary', 'aria-label': 'Your request' },
+    h('div', {},
+      h('p', { className: 'eyebrow' }, 'Your request'),
+      h('p', { className: 'request-title' }, proposal.title),
+      h('p', { className: 'request-meta' },
+        `${hoursPhrase(proposal.likely)} of work, due ${dayLabel(dueDate)}`)
+    ),
+    h('button', {
+      type: 'button',
+      id: 'edit-request',
+      className: 'link-button',
+      onClick: () => {
+        editing = true;
+        formDraft = null;
+        rerender();
+        document.getElementById('proposal-title')?.focus();
+      }
+    }, 'Edit request')
+  );
+}
+
+const VERDICT_WORDS = { fits: 'Fits', tight: 'Tight', short: "Doesn't fit" };
+
+function renderVerdict({ analysis, state }) {
+  const proposalNote = analysis.baselineBroken && analysis.kind === 'short'
+    ? "Your week already had a gap before this request, so the numbers above show both."
+    : '';
+  return h('section', {
+    id: 'check-verdict',
+    className: `verdict-block verdict-${analysis.kind}`,
+    'aria-labelledby': 'verdict-headline'
+  },
+    h('p', { className: `verdict-word verdict-word-${analysis.kind}` }, VERDICT_WORDS[analysis.kind]),
+    h('h2', { id: 'verdict-headline', className: 'verdict-headline', tabindex: '-1' }, analysis.headline),
+    analysis.detail ? h('p', { className: 'verdict-detail' }, analysis.detail) : null,
+    proposalNote ? h('p', { className: 'verdict-detail' }, proposalNote) : null,
+    analysis.kind === 'short' && analysis.option && analysis.afterClause?.kind === 'hours' && analysis.afterClause.hours >= 2
+      ? h('p', { className: 'aside-line' }, 'That would need the 25th hour. Here is one way to get some time back.')
+      : null,
+    h('p', { className: 'verdict-sleep' },
+      `Sleep stays protected (${state.sleep.start}–${state.sleep.end}) in every number here.`)
+  );
+}
+
+function renderOption({ analysis, state, dispatch }) {
+  if (analysis.kind === 'fits') return null;
+  if (!analysis.option) {
+    if (analysis.kind === 'tight') return null;
+    return h('section', { id: 'check-option', className: 'option-card option-none' },
+      h('p', { className: 'eyebrow' }, 'Verified option'),
+      h('h3', {}, 'No change makes this fit.'),
+      h('p', {}, analysis.noOptionText)
+    );
+  }
+  const option = analysis.option;
+  const resultText = option.spareHours !== null
+    ? `With that change it fits. Your tightest day, ${dayLabel(option.spareDate)}, still has ${hoursPhrase(option.spareHours)} to spare.`
+    : 'With that change it fits.';
+  const lead = analysis.kind === 'tight' ? 'If you want more room' : 'One change that would make it fit';
+  return h('section', { id: 'check-option', className: `option-card${option.needsApproval ? ' option-approval' : ''}` },
+    h('div', { className: 'option-head' },
+      h('p', { className: 'eyebrow' }, 'Verified option'),
+      h('span', { className: `option-tag ${option.needsApproval ? 'needs-approval' : 'self-serve'}` },
+        option.needsApproval ? 'If approved' : 'You can do this yourself')
+    ),
+    h('h3', {}, lead),
+    h('p', { className: 'option-label' }, option.label),
+    h('p', { className: 'option-result' }, resultText),
+    option.needsApproval
+      ? h('p', { className: 'option-note' },
+          'This needs someone else to agree first. Until they do, nothing in your week changes.')
+      : null,
+    h('p', { className: 'option-note' },
+      'Checked against your other commitments, sleep protected.'),
+    analysis.alternative
+      ? h('p', { className: 'option-note' },
+          `A change you can make yourself: ${analysis.alternative.label}.`)
+      : null
+  );
+}
+
+function renderEstimateRange(analysis, after, state) {
+  if (!analysis.range) return null;
+  const levels = [
+    ['optimistic', 'If everything goes quickly'],
+    ['typical', 'As estimated'],
+    ['conservative', 'If everything runs long']
+  ];
+  return h('section', { id: 'estimate-range', className: 'range-block' },
+    h('p', { className: 'eyebrow' }, 'It depends on the estimate'),
+    h('p', { className: 'range-sentence' }, analysis.range.sentence),
+    h('p', { className: 'option-note' }, 'Your other commitments are held at their usual estimates in this comparison.'),
+    h('details', { className: 'quiet-details', id: 'all-estimates' },
+      h('summary', {}, 'Compare all three estimates'),
+      h('p', { className: 'helper' }, 'Here every commitment runs quick, as estimated, or long together.'),
+      h('ul', { className: 'estimate-list' },
+        levels.map(([key, label]) => {
+          const schedule = after.evaluation[key];
+          const cost = deadlineCost(schedule, state.days);
+          const detail = cost
+            ? `${dayLabel(cost.date)}: ${cost.marginHours < 0 ? `${hoursPhrase(-cost.marginHours)} short` : `${hoursPhrase(cost.marginHours)} to spare`}`
+            : 'Nothing due';
+          return h('li', {},
+            h('strong', {}, label),
+            ` — ${schedule.feasible ? 'fits' : "doesn't fit"}. ${detail}.`);
+        })
+      )
+    )
+  );
+}
+
+function renderSmallerOffer({ analysis, proposal, state, ui, dispatch, rerender }) {
+  const active = ui.smaller && ui.smaller.active;
+  if (!active && analysis.kind !== 'short') return null;
+  if (!active && proposal.likely <= 0.5) return null;
+
+  const statusLine = active
+    ? (analysis.fits
+        ? `The smaller version (${hoursPhrase(proposal.likely)}) fits. The full request (${hoursPhrase(ui.smaller.fullHours)}) didn't.`
+        : `Even the smaller version (${hoursPhrase(proposal.likely)}) doesn't fit.`)
+    : '';
+
+  const scopeInput = h('input', {
+    id: 'smaller-scope', name: 'scope', type: 'text', maxlength: '120', autocomplete: 'off',
+    value: ui.smaller?.scope ?? '',
+    placeholder: 'e.g. just the first draft'
+  });
+  const hoursInput = h('input', {
+    id: 'smaller-hours', name: 'hours', type: 'number', inputmode: 'decimal', min: '0.5', step: '0.5',
+    value: active ? String(proposal.likely) : '', placeholder: 'e.g. 2'
+  });
+  const error = h('p', { id: 'smaller-error', className: 'field-error', role: 'alert', hidden: true });
+
+  return h('section', { id: 'smaller-offer', className: 'smaller-offer' },
+    h('p', { className: 'eyebrow' }, 'Could you offer less?'),
+    active ? h('p', { id: 'smaller-status', className: 'smaller-status', role: 'status' }, statusLine) : null,
+    h('form', {
+      id: 'smaller-form',
+      novalidate: true,
+      onSubmit: ev => {
+        ev.preventDefault();
+        error.hidden = true;
+        const fullHours = active ? ui.smaller.fullHours : proposal.likely;
+        const fullFields = active ? ui.smaller.fullFields : null;
+        const hours = Number(hoursInput.value);
+        if (!isHalfHour(hours) || hours < 0.5) {
+          error.textContent = 'Enter the hours in half-hour steps, such as 1.5 or 2.';
+          error.hidden = false;
+          return;
+        }
+        if (hours >= fullHours) {
+          error.textContent = `A smaller version needs fewer than ${hoursPhrase(fullHours)}.`;
+          error.hidden = false;
+          return;
+        }
+        const base = fullFields ?? draftFromProposal(proposal, state);
+        const next = {
+          active: true,
+          scope: scopeInput.value.trim(),
+          fullHours,
+          fullFields: base
+        };
+        try {
+          ui.smaller = next;
+          pendingFocus = true;
+          dispatch({
+            type: 'UPDATE_PROPOSAL',
+            proposalId: proposal.id,
+            fields: { ...base, likely: String(hours), min: '', max: '' }
+          }, { rethrow: true });
+        } catch (failure) {
+          pendingFocus = false;
+          ui.smaller = active ? ui.smaller : null;
+          error.textContent = failure?.message || 'Could not check that smaller version.';
+          error.hidden = false;
         }
       }
     },
       h('div', { className: 'form-grid-two' },
         h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-title' }, 'Commitment name *'),
-          inputNodes.title,
-          h('small', { className: 'field-hint' }, 'Required, 1 to 80 characters.'),
-          makeFieldError('title')
+          h('label', { for: 'smaller-scope' }, 'What would you do instead?'),
+          scopeInput
         ),
         h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-likely' }, 'Typical hours needed *'),
-          inputNodes.likely,
-          h('small', { className: 'field-hint' }, 'Required, 0.5 to 40h in half-hour steps (0.5, 1, 1.5, …).'),
-          makeFieldError('likely'),
-          suggestionBox
+          h('label', { for: 'smaller-hours' }, 'Estimated hours for that'),
+          hoursInput
         )
       ),
-
-      h('div', { className: 'form-grid-two' },
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-min' }, 'Optimistic (minimum) hours (optional)'),
-          inputNodes.min,
-          makeFieldError('min')
-        ),
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-max' }, 'Conservative (maximum) hours (optional)'),
-          inputNodes.max,
-          makeFieldError('max')
-        )
-      ),
-      rangePreview,
-
-      h('div', { className: 'form-grid-three' },
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-deadline' }, 'Target deadline date *'),
-          inputNodes.deadline,
-          h('small', { className: 'field-hint' }, `Must be within ${firstDate} – ${lastDate}.`),
-          makeFieldError('deadline')
-        ),
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-tag' }, 'Priority tag *'),
-          inputNodes.tag,
-          makeFieldError('tag')
-        ),
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-type' }, 'Task type (for estimate learning)'),
-          inputNodes.type,
-          makeFieldError('type')
-        )
-      ),
-
-      latestGroup,
-
-      h('div', { className: 'form-grid-two' },
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-earliest' }, 'Earliest start date (optional)'),
-          inputNodes.earliestDate,
-          h('small', { className: 'field-hint' }, `Defaults to first loaded day (${firstDate}).`),
-          makeFieldError('earliestDate')
-        )
-      ),
-
-      formErrorBanner,
-
+      error,
       h('div', { className: 'form-submit-row' },
-        h('button', { type: 'submit', className: 'button button-primary' }, 'Check commitment'),
-        h('button', {
-          type: 'button',
-          className: 'button button-quiet',
-          onClick: () => {
-            resetCheckFormDraft(state);
-            renderCheckScreen(container, { state, derived, dispatch });
-          }
-        }, 'Reset form')
+        h('button', { type: 'submit', className: 'button button-secondary' }, 'Check the smaller version'),
+        active
+          ? h('button', {
+              type: 'button',
+              className: 'link-button',
+              onClick: () => {
+                const fields = ui.smaller.fullFields;
+                ui.smaller = null;
+                pendingFocus = true;
+                try {
+                  dispatch({ type: 'UPDATE_PROPOSAL', proposalId: proposal.id, fields }, { rethrow: true });
+                } catch {
+                  pendingFocus = false;
+                }
+              }
+            }, 'Back to the full request')
+          : null
       )
+    ),
+    h('p', { className: 'option-note' },
+      "A smaller version only counts as fitting once the check has run on it.")
+  );
+}
+
+function renderReplySlip({ analysis, proposal, state, ui, rerender }) {
+  const smaller = ui.smaller && ui.smaller.active
+    ? { active: true, scope: ui.smaller.scope }
+    : null;
+  const reply = buildReply({
+    analysis,
+    proposal,
+    days: state.days,
+    variant: ui.variant,
+    smaller,
+    includeWorkload: false
+  });
+
+  if (!ui.touched || ui.text === reply.text) {
+    ui.touched = false;
+    ui.text = reply.text;
+    ui.baseSignature = analysis.signature;
+  }
+  ui.autoText = reply.text;
+  const flagged = ui.touched && analysis.signature !== ui.baseSignature;
+
+  const textarea = h('textarea', {
+    id: 'reply-text',
+    className: 'reply-text',
+    rows: '6',
+    spellcheck: 'true',
+    'aria-describedby': 'reply-note'
+  });
+  textarea.value = ui.text;
+  textarea.addEventListener('input', () => {
+    ui.text = textarea.value;
+    ui.touched = textarea.value !== ui.autoText;
+  });
+
+  const copyStatus = h('span', {
+    id: 'copy-status', className: 'copy-status', role: 'status', 'aria-live': 'polite'
+  });
+  let copyTimer = null;
+
+  const copyButton = h('button', {
+    type: 'button',
+    id: 'copy-reply',
+    className: 'button button-primary',
+    // Copying only writes text to the clipboard. It never dispatches to the
+    // store, so it cannot accept a request, record an approval or apply a repair.
+    onClick: async () => {
+      const ok = await copyToClipboard(textarea.value);
+      copyStatus.textContent = ok ? 'Copied' : "Couldn't copy. Select the text and copy it yourself.";
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => { copyStatus.textContent = ''; }, 3000);
+    }
+  }, 'Copy reply');
+
+  const variantControls = analysis.replyKind === 'decline'
+    ? h('div', { className: 'variant-toggle', role: 'group', 'aria-label': 'What kind of reply' },
+        [['decline', 'Say no kindly'], ['flex', 'Ask for flexibility']].map(([value, label]) =>
+          h('button', {
+            type: 'button',
+            className: `button button-quiet${ui.variant === value ? ' is-on' : ''}`,
+            'aria-pressed': String(ui.variant === value),
+            onClick: () => {
+              ui.variant = value;
+              ui.touched = false;
+              rerender();
+            }
+          }, label))
+      )
+    : null;
+
+  return h('section', { id: 'reply-slip', className: 'reply-slip', 'aria-labelledby': 'reply-title' },
+    h('div', { className: 'slip-head' },
+      h('h3', { id: 'reply-title' }, "Here's what you could send"),
+      h('span', { className: 'slip-kind' }, reply.label)
+    ),
+    flagged
+      ? h('div', { id: 'reply-flag', className: 'reply-flag', role: 'status' },
+          h('strong', {}, 'Check this before sending.'),
+          ' Your week changed since this was drafted, so what it says may no longer be right. Your edits are kept.',
+          h('button', {
+            type: 'button',
+            className: 'button button-outline button-sm',
+            onClick: () => {
+              ui.baseSignature = analysis.signature;
+              rerender();
+            }
+          }, "I've checked it")
+        )
+      : null,
+    variantControls,
+    h('label', { for: 'reply-text', className: 'sr-only' }, 'Reply draft. You can edit it.'),
+    textarea,
+    h('p', { id: 'reply-note', className: 'slip-note' },
+      [reply.note, 'Copying adds nothing to your week and sends nothing.']
+        .filter(Boolean).join(' ')),
+    h('div', { className: 'slip-actions' },
+      copyButton,
+      copyStatus,
+      ui.touched
+        ? h('button', {
+            type: 'button',
+            className: 'link-button',
+            onClick: () => { ui.touched = false; rerender(); }
+          }, 'Use the suggested wording again')
+        : null
+    )
+  );
+}
+
+function renderDecisions({ analysis, proposal, after, dispatch, ui }) {
+  const proposalIds = [proposal.id];
+  const selfServe = findSelfServeAcceptRepair(after.repairs, proposalIds);
+  const done = () => { resetRequestUi(); };
+  const buttons = [];
+
+  if (analysis.fits) {
+    buttons.push(h('button', {
+      type: 'button', className: 'button button-primary',
+      onClick: () => { done(); dispatch({ type: 'ACCEPT_PROPOSAL', proposalIds, mode: 'accept' }); }
+    }, 'Add it to my week'));
+  } else {
+    if (selfServe) {
+      buttons.push(h('button', {
+        type: 'button', className: 'button button-primary',
+        onClick: () => {
+          done();
+          dispatch({ type: 'ACCEPT_PROPOSAL', proposalIds, mode: 'accept-repair', repairId: selfServe.id });
+        }
+      }, 'Add it with this change'));
+    }
+    buttons.push(h('button', {
+      type: 'button', className: 'link-button',
+      onClick: () => { done(); dispatch({ type: 'ACCEPT_PROPOSAL', proposalIds, mode: 'override' }); }
+    }, 'Add it anyway'));
+  }
+  buttons.push(h('button', {
+    type: 'button', className: 'link-button',
+    onClick: () => { done(); dispatch({ type: 'DISCARD_PROPOSAL', proposalIds }); }
+  }, 'Not now'));
+
+  return h('section', { id: 'check-decisions', className: 'decisions' },
+    h('p', { className: 'eyebrow' }, 'Your week'),
+    h('p', { className: 'decision-help' },
+      analysis.fits
+        ? 'Nothing is added until you choose.'
+        : analysis.option && analysis.option.needsApproval
+          ? 'Wait for the reply before adding this. Adding it anyway keeps the shortfall visible on your week.'
+          : "Adding it anyway keeps the shortfall visible on your week. It never takes time from your sleep."),
+    h('div', { className: 'decision-actions' }, buttons)
+  );
+}
+
+function renderBooked({ analysis, proposal, state, derived, after, dispatch }) {
+  const through = Math.max(proposal.targetDay, analysis.afterCost?.dayIndex ?? 0);
+  const info = describeBookedWeek({
+    state, derived, throughDayIndex: through, schedule: after.evaluation.typical
+  });
+  const errorBox = h('p', { id: 'busy-error', className: 'field-error', role: 'alert', hidden: true });
+  const daySelect = h('select', { id: 'busy-day', name: 'day' },
+    info.rows.map(row => h('option', { value: String(row.index) }, row.label)));
+  const startInput = h('input', { id: 'busy-start', name: 'start', type: 'time', value: '09:00', step: '1800' });
+  const endInput = h('input', { id: 'busy-end', name: 'end', type: 'time', value: '10:00', step: '1800' });
+
+  const addForm = h('form', {
+    id: 'busy-form',
+    novalidate: true,
+    onSubmit: ev => {
+      ev.preventDefault();
+      errorBox.hidden = true;
+      try {
+        focusSelectorAfterRender = '#busy-day';
+        dispatch({
+          type: 'ADD_BUSY_BLOCK',
+          dayIndex: Number(daySelect.value),
+          start: startInput.value,
+          end: endInput.value
+        }, { rethrow: true });
+      } catch (failure) {
+        focusSelectorAfterRender = null;
+        errorBox.textContent = failure?.message || 'Could not add that block.';
+        errorBox.hidden = false;
+      }
+    }
+  },
+    h('p', { className: 'eyebrow' }, 'Something missing? Add a fixed block'),
+    h('div', { className: 'form-grid-three' },
+      h('div', { className: 'form-field' }, h('label', { for: 'busy-day' }, 'Day'), daySelect),
+      h('div', { className: 'form-field' }, h('label', { for: 'busy-start' }, 'From'), startInput),
+      h('div', { className: 'form-field' }, h('label', { for: 'busy-end' }, 'To'), endInput)
+    ),
+    errorBox,
+    h('div', { className: 'form-submit-row' },
+      h('button', { type: 'submit', className: 'button button-secondary' }, 'Add block and check again'),
+      h('button', {
+        type: 'button', id: 'booked-to-week', className: 'link-button',
+        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
+      }, 'Edit in My week')
     )
   );
 
-  const resultsSection = h('section', {
-    id: 'proposals-results',
-    className: 'proposals-results',
-    'aria-live': 'polite'
-  });
+  return h('details', {
+    id: 'booked-week',
+    className: 'quiet-details booked',
+    open: bookedOpen,
+    onToggle: ev => { bookedOpen = ev.currentTarget.open; }
+  },
+    h('summary', {}, "See what's booked"),
+    h('p', { className: 'helper' },
+      `This is everything the check counted from ${dayLabel(info.rows[0]?.date)} to ${dayLabel(info.rows[info.rows.length - 1]?.date)}.`),
+    info.evidence.length
+      ? h('ul', { className: 'evidence-list' }, info.evidence.map(line => h('li', {}, line)))
+      : null,
+    h('ul', { className: 'booked-days' },
+      info.rows.map(row =>
+        h('li', { className: 'booked-day' },
+          h('strong', {}, row.label),
+          h('div', { className: 'booked-line' },
+            row.busy.length
+              ? [
+                  'Busy: ',
+                  row.busy.map(block =>
+                    h('span', { className: 'busy-chip' },
+                      `${block.start}–${block.end}`,
+                      h('button', {
+                        type: 'button',
+                        className: 'chip-remove',
+                        'aria-label': `Remove busy block ${block.start} to ${block.end} on ${row.label}`,
+                        onClick: () => {
+                          focusSelectorAfterRender = '#booked-week summary';
+                          dispatch({ type: 'REMOVE_BUSY_BLOCK', dayIndex: row.index, start: block.start, end: block.end });
+                        }
+                      }, 'Remove')
+                    ))
+                ]
+              : 'No busy blocks.'
+          ),
+          h('div', { className: 'booked-line' },
+            row.work.length
+              ? `Work windows: ${row.work.map(win => `${win.start}–${win.end}`).join(', ')}. `
+              : 'No work windows. ',
+            `Free for work after busy blocks and sleep: ${hoursPhrase(row.availableHours)}.`
+          )
+        ))
+    ),
+    h('p', { className: 'eyebrow' }, 'Deadlines counted'),
+    h('ul', { className: 'deadline-list' },
+      [
+        ...info.deadlines.map(item =>
+          h('li', {}, `${item.title}, ${hoursPhrase(item.hours)}, due ${dayLabel(item.date)}`)),
+        h('li', {}, `This request: ${proposal.title}, ${hoursPhrase(proposal.likely)}, due ${dayLabel(state.days[proposal.targetDay]?.date)}`)
+      ]
+    ),
+    addForm
+  );
+}
 
-  if (!state.proposals.length || !derived.commitmentCheck) {
-    resultsSection.append(
-      h('div', { className: 'panel empty-proposals' },
-        h('span', { className: 'panel-label' }, 'NO PENDING DRAFTS'),
-        h('h3', {}, 'No draft commitments pending decision'),
-        h('p', { className: 'helper' },
-          'Submit the form above to evaluate a potential commitment side by side against your current week before accepting it.'
-        )
+function renderFullNumbers({ analysis, proposal, state, before, after }) {
+  const beforeCost = deadlineCost(before.evaluation.typical, state.days);
+  const withoutLine = analysis.baselineBroken && analysis.beforeClause
+    ? `You're ${analysis.beforeClause.text}.`
+    : beforeCost
+      ? `Everything fits. Your tightest day, ${dayLabel(beforeCost.date)}, has ${hoursPhrase(Math.max(0, beforeCost.marginHours))} to spare.`
+      : 'Nothing is due yet.';
+  const dueLine = analysis.afterCost?.tasks?.length
+    ? `Due by ${dayLabel(analysis.afterCost.date)}: ${analysis.afterCost.tasks.map(task => `${task.title} (${fmtHours(task.hours)})`).join(', ')}.`
+    : '';
+  return h('details', { id: 'full-numbers', className: 'quiet-details' },
+    h('summary', {}, 'Full numbers'),
+    h('div', { className: 'cost-statement-box' },
+      h('p', {}, h('strong', {}, 'Without this request: '), withoutLine),
+      h('p', {}, h('strong', {}, 'With this request: '), analysis.headline),
+      dueLine ? h('p', {}, dueLine) : null,
+      h('p', {}, `Added work: ${hoursPhrase(proposal.likely)} as estimated, between ${fmtHours(proposal.min)} and ${fmtHours(proposal.max)}.`)
+    )
+  );
+}
+
+function renderIncompleteNotes({ state, analysis }) {
+  const notes = [];
+  if (!state.calendarImportedAt && !state.demo) {
+    notes.push("No calendar has been imported. Classes and other fixed blocks only count if you've added them.");
+  }
+  const anyWork = state.days.some(day => (day.workWindows ?? []).length);
+  if (!anyWork) notes.push('No work windows are set, so there are no hours to schedule into.');
+  if (!notes.length) return null;
+  return h('div', { id: 'incomplete-note', className: 'incomplete-note', role: 'note' },
+    notes.map(note => h('p', {}, note))
+  );
+}
+
+/**
+ * Renders the Check screen: ask, verdict, one verified option, reply.
+ */
+export function renderCheckScreen(container, ctx) {
+  const { state, derived, dispatch } = ctx;
+  const rerender = () => renderCheckScreen(container, ctx);
+  const pending = state.proposals[0] ?? null;
+  const checked = derived.commitmentCheck;
+  if (!pending) editing = false;
+
+  const parts = [];
+  const showResults = Boolean(pending && checked && !editing);
+  if (!showResults) parts.push(
+    h('header', { className: 'screen-intro' },
+      h('h1', { className: 'screen-title' }, 'Check a request'),
+      h('p', { className: 'screen-lede' },
+        'Someone asked you to take on one more thing. Tell me about it and I will check it against your real week.')
+    )
+  );
+
+  const exampleBlock = renderExampleLine(state);
+  if (exampleBlock) parts.push(exampleBlock);
+
+  if (state.unresolvedConflict && !derived.evaluation.typical.feasible) {
+    parts.push(
+      h('div', { className: 'banner banner-warn', role: 'status' },
+        h('div', { className: 'banner-body' },
+          h('strong', {}, 'Your week already has a gap. '),
+          'You added something earlier even though it did not fit. This check keeps that in mind.'
+        ),
+        h('button', {
+          type: 'button', className: 'button button-outline button-sm',
+          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
+        }, 'See what can move')
       )
     );
-  } else {
-    const checked = derived.commitmentCheck;
-
-    if (state.proposals.length > 1 && checked.together) {
-      resultsSection.append(
-        renderOutcomeCard({
-          title: `Combined impact: all ${state.proposals.length} pending proposals together`,
-          badgeText: `EVALUATED TOGETHER · ${state.proposals.length} PROPOSALS`,
-          beforeOutcome: checked.before,
-          afterOutcome: checked.together,
-          proposals: state.proposals,
-          state,
-          dispatch
-        })
-      );
-    }
-
-    checked.separate.forEach((outcome, index) => {
-      const proposal = state.proposals[index];
-      if (!proposal) return;
-      const badgeText = state.proposals.length > 1
-        ? `EVALUATED SEPARATELY · PROPOSAL ${index + 1} OF ${state.proposals.length}`
-        : 'BEFORE & AFTER COMPARISON · DRAFT PROPOSAL';
-      resultsSection.append(
-        renderOutcomeCard({
-          title: `Proposal: ${proposal.title}`,
-          badgeText,
-          beforeOutcome: checked.before,
-          afterOutcome: outcome,
-          proposals: [proposal],
-          state,
-          dispatch
-        })
-      );
-    });
   }
 
-  container.replaceChildren(
-    headerBar,
-    ...(unresolvedBanner ? [unresolvedBanner] : []),
-    formPanel,
-    resultsSection
-  );
+  let analysis = null;
+  if (pending && checked && !editing) {
+    const index = 0;
+    const before = checked.before;
+    const after = checked.separate[index];
+    const ui = getUi(pending.id);
+    analysis = analyzeRequest({
+      state, derived, proposal: pending, before, after,
+      smaller: ui.smaller && ui.smaller.active ? ui.smaller : null
+    });
+
+    parts.push(renderRequestSummary({ proposal: pending, state, rerender }));
+    parts.push(renderVerdict({ analysis, state }));
+    const incomplete = renderIncompleteNotes({ state, analysis });
+    if (incomplete) parts.push(incomplete);
+    const option = renderOption({ analysis, state, dispatch });
+    if (option) parts.push(option);
+    parts.push(renderReplySlip({ analysis, proposal: pending, state, ui, rerender }));
+    const range = renderEstimateRange(analysis, after, state);
+    if (range) parts.push(range);
+    const smallerOffer = renderSmallerOffer({ analysis, proposal: pending, state, ui, dispatch, rerender });
+    if (smallerOffer) parts.push(smallerOffer);
+    parts.push(renderDecisions({ analysis, proposal: pending, after, dispatch, ui }));
+    parts.push(renderBooked({ analysis, proposal: pending, state, derived, after, dispatch }));
+    parts.push(renderFullNumbers({ analysis, proposal: pending, state, before, after }));
+
+    if (state.proposals.length > 1) {
+      parts.push(
+        h('section', { className: 'extra-pending', id: 'extra-pending' },
+          h('p', { className: 'eyebrow' }, 'Also waiting on a decision'),
+          h('ul', {},
+            state.proposals.slice(1).map(item =>
+              h('li', {},
+                `${item.title} (${hoursPhrase(item.likely)}) `,
+                h('button', {
+                  type: 'button', className: 'button button-quiet button-sm',
+                  onClick: () => dispatch({ type: 'DISCARD_PROPOSAL', proposalIds: [item.id] })
+                }, 'Not now')
+              ))
+          )
+        )
+      );
+    }
+  } else {
+    parts.push(renderRequestForm({ state, derived, dispatch, pending, rerender }));
+  }
+
+  container.replaceChildren(...parts);
+
+  if (analysis) {
+    if (pendingFocus) {
+      pendingFocus = false;
+      announce(`${VERDICT_WORDS[analysis.kind]}. ${analysis.headline}`);
+      const heading = document.getElementById('verdict-headline');
+      heading?.focus({ preventScroll: false });
+      heading?.scrollIntoView?.({ block: 'start' });
+    }
+  } else if (pendingFocus) {
+    pendingFocus = false;
+  }
+  if (focusSelectorAfterRender) {
+    const target = container.querySelector(focusSelectorAfterRender);
+    focusSelectorAfterRender = null;
+    target?.focus();
+  }
 }

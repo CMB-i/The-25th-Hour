@@ -55,7 +55,7 @@ export function findOpenTasksWithLearnedSuggestions(state, profiles = []) {
 }
 
 /**
- * Renders Screen 4: Did It Work? (F3 Reality Feedback & 7-Day Review).
+ * Renders Screen: Review (F3 Reality Feedback & 7-Day Review).
  */
 export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   const profiles = derived.estimateProfiles ?? [];
@@ -68,37 +68,16 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   const openTasks = selectableTasks.filter(task => !completedIds.has(task.id));
   const defaultTask = eligibleTasks[0] ?? openTasks[0] ?? selectableTasks[0] ?? null;
 
-  const headerBar = h('section', { className: 'panel feedback-header' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('div', { className: 'panel-label' },
-          h('span', { className: 'panel-index' }, '04'),
-          'REALITY FEEDBACK · DID IT WORK?'
-        ),
-        h('h2', {}, 'Close the loop on estimates & protected sleep.'),
-        h('p', { className: 'helper' },
-          'Log actual hours once a task finishes, optionally record morning sleep and stress, and review the last 7 days. No scores, streaks, or guilt mechanics.'
-        )
-      ),
-      h('span', { className: 'pill' }, `${state.feedback.tasks.length} completed · ${state.feedback.sleepReports.length} night(s) logged`)
-    ),
-    h('div', { className: 'quick-actions' },
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
-      }, '← Back to My Week'),
-      h('button', {
-        type: 'button',
-        className: 'button button-secondary',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'check' })
-      }, 'Check a commitment (Should I Say Yes?)'),
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'settings' })
-      }, 'Imports & Settings')
-    )
+  const headerBar = h('header', { className: 'screen-intro' },
+    h('h1', { className: 'screen-title' }, 'Review'),
+    h('p', { className: 'screen-lede' },
+      openTasks.length
+        ? 'Tell me how long things really took, and the next estimate gets better.'
+        : 'Nothing to log yet. Past entries and the seven-day report are below.'),
+    h('button', {
+      type: 'button', className: 'link-button',
+      onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
+    }, 'Back to My week')
   );
 
   // 1. Task Completion & Actual-Hours Prompt Form
@@ -229,10 +208,8 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   const taskFeedbackPanel = h('section', { className: 'panel task-feedback-panel' },
     h('div', { className: 'panel-title-line' },
       h('div', {},
-        h('span', { className: 'panel-label' }, '1 · ACTUAL HOURS PER TASK'),
         h('h3', {}, 'How long did it actually take?')
       ),
-      h('span', { className: 'pill' }, 'Half-hour steps · 1-tap confirm')
     ),
     promptBanner,
     h('form', {
@@ -345,8 +322,7 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   const sleepPanel = h('section', { className: 'panel sleep-feedback-panel' },
     h('div', { className: 'panel-title-line' },
       h('div', {},
-        h('span', { className: 'panel-label' }, '2 · OPTIONAL MORNING SLEEP & STRESS CHECK-IN'),
-        h('h3', {}, 'Sleep & stress report (optional)')
+        h('h3', {}, 'Sleep and stress report')
       ),
       h('span', { className: 'pill' }, `Protected opportunity: ${fmtHours(plannedSleepHrs)}/night`)
     ),
@@ -493,8 +469,7 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   const reviewPanel = h('section', { id: 'review', className: 'panel review-panel' },
     h('div', { className: 'panel-title-line' },
       h('div', {},
-        h('span', { className: 'panel-label' }, '3 · SEVEN-DAY REVIEW'),
-        h('h3', {}, `Did it work? (${review.fromDate} to ${review.throughDate})`)
+        h('h3', {}, `Seven-day report (${review.fromDate} to ${review.throughDate})`)
       ),
       h('span', { className: 'pill' }, `${review.plannedDays} planned day(s) in window`)
     ),
@@ -524,5 +499,14 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
     )
   );
 
-  container.replaceChildren(headerBar, taskFeedbackPanel, sleepPanel, reviewPanel);
+  const sleepDetails = h('details', { className: 'quiet-details', id: 'sleep-details' },
+    h('summary', {}, 'Sleep and stress (optional)'),
+    sleepPanel
+  );
+  const historyDetails = h('details', { className: 'quiet-details', id: 'history-details', open: state.feedback.tasks.length > 0 },
+    h('summary', {}, `History and seven-day report (${state.feedback.tasks.length} logged)`),
+    reviewPanel
+  );
+
+  container.replaceChildren(headerBar, taskFeedbackPanel, historyDetails, sleepDetails);
 }

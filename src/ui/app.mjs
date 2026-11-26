@@ -1,4 +1,5 @@
 import { h } from './dom.mjs';
+import { renderHomeScreen } from './render-home.mjs';
 import { renderCheckScreen } from './render-check.mjs';
 import { renderFeedbackScreen } from './render-feedback.mjs';
 import { renderRescueScreen } from './render-rescue.mjs';
@@ -7,7 +8,10 @@ import { renderWeekScreen } from './render-week.mjs';
 import { createStore } from './state.mjs';
 import { VALID_SCREENS } from './storage.mjs';
 
+const DEFAULT_SCREEN = 'home';
+
 const SCREEN_IDS = {
+  home: 'screen-home',
   week: 'screen-week',
   check: 'screen-check',
   rescue: 'screen-rescue',
@@ -15,7 +19,11 @@ const SCREEN_IDS = {
   settings: 'screen-settings'
 };
 
+// Pages that live under "My week" keep the My week link highlighted.
+const WEEK_FAMILY = new Set(['week', 'rescue', 'feedback', 'settings']);
+
 const SCREEN_RENDERERS = {
+  home: renderHomeScreen,
   week: renderWeekScreen,
   check: renderCheckScreen,
   rescue: renderRescueScreen,
@@ -53,6 +61,15 @@ function safeDispatch(action, { rethrow = false } = {}) {
   }
 }
 
+let lastScreen = null;
+
+function syncHash(screen) {
+  const wanted = `#/${screen}`;
+  if (window.location.hash !== wanted) {
+    try { window.history.pushState(null, '', wanted); } catch { /* ignore (file://) */ }
+  }
+}
+
 function render(state, derived) {
   const errorBox = el('error-region');
   try {
@@ -61,15 +78,13 @@ function render(state, derived) {
       errorBox.textContent = '';
     }
 
-    const hero = el('hero-banner');
-    if (hero) hero.hidden = state.screen !== 'week';
-    const sleepPill = el('hero-sleep-pill');
-    if (sleepPill) sleepPill.textContent = `${state.sleep.start}–${state.sleep.end}`;
-
-    for (const tab of document.querySelectorAll('.nav-tab[data-screen]')) {
-      const active = tab.dataset.screen === state.screen;
-      tab.setAttribute('aria-current', active ? 'page' : 'false');
+    const weekLink = el('nav-week');
+    if (weekLink) {
+      weekLink.setAttribute('aria-current', state.screen === 'week' ? 'page' : 'false');
+      weekLink.classList.toggle('in-family', WEEK_FAMILY.has(state.screen));
     }
+    const chip = el('example-chip');
+    if (chip) chip.hidden = !state.demo;
 
     const status = el('status-region');
     if (status) {
@@ -78,7 +93,7 @@ function render(state, derived) {
           h('span', {}, state.notice),
           h('button', {
             type: 'button',
-            className: 'button button-quiet button-sm',
+            className: 'link-button',
             onClick: () => safeDispatch({ type: 'SET_NOTICE', notice: '' })
           }, 'Dismiss')
         );
@@ -89,16 +104,27 @@ function render(state, derived) {
       }
     }
 
+    const screenChanged = lastScreen !== null && lastScreen !== state.screen;
+    lastScreen = state.screen;
+
     for (const screenKey of VALID_SCREENS) {
       const panel = el(SCREEN_IDS[screenKey]);
       if (!panel) continue;
       const visible = state.screen === screenKey;
       panel.hidden = !visible;
-      if (!visible) continue;
+      if (!visible) {
+        if (panel.childNodes.length) panel.replaceChildren();
+        continue;
+      }
       const renderer = SCREEN_RENDERERS[screenKey];
       if (renderer) {
         renderer(panel, { state, derived, dispatch: safeDispatch });
       }
+    }
+    syncHash(state.screen);
+    if (screenChanged) {
+      window.scrollTo(0, 0);
+      el('main-content')?.focus({ preventScroll: true });
     }
   } catch (error) {
     if (errorBox) {
@@ -108,23 +134,25 @@ function render(state, derived) {
   }
 }
 
-for (const tab of document.querySelectorAll('.nav-tab[data-screen]')) {
-  tab.addEventListener('click', () => {
-    const screen = tab.dataset.screen;
-    if (VALID_SCREENS.includes(screen)) {
-      safeDispatch({ type: 'NAVIGATE', screen });
-    }
-  });
+el('leave-example')?.addEventListener('click', () => safeDispatch({ type: 'LEAVE_DEMO' }));
+
+function screenFromHash() {
+  const name = window.location.hash.replace(/^#\/?/, '');
+  return VALID_SCREENS.includes(name) ? name : null;
 }
 
-const homeLink = document.querySelector('[data-home="week"]');
-if (homeLink) {
-  homeLink.addEventListener('click', ev => {
-    ev.preventDefault();
-    safeDispatch({ type: 'NAVIGATE', screen: 'week' });
-    el('main-content')?.focus();
-  });
-}
+window.addEventListener('hashchange', () => {
+  const screen = screenFromHash();
+  if (screen && screen !== store.getState().screen) {
+    safeDispatch({ type: 'OPEN_SCREEN', screen });
+  }
+});
 
 store.subscribe(render);
-render(store.getState(), store.derive());
+// The app opens on Home (or the page named in the address), without rewriting saved data.
+const startScreen = screenFromHash() ?? DEFAULT_SCREEN;
+if (store.getState().screen !== startScreen) {
+  safeDispatch({ type: 'OPEN_SCREEN', screen: startScreen });
+} else {
+  render(store.getState(), store.derive());
+}

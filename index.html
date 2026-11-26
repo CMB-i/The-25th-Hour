@@ -3,72 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="./src/ui/styles.css">
   <title>The 25th Hour — Commitment Check</title>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div id="sr-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="shell">
-    <header class="masthead">
-      <div class="masthead-inner">
-        <a class="brand" href="#main-content" data-home="week" aria-label="The 25th Hour — My Week">
-          <span class="brand-symbol" aria-hidden="true">25<span class="brand-star">✳</span></span>
-          <span class="brand-text">THE 25TH HOUR<small>COMMITMENT INTELLIGENCE</small></span>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#/home" data-home="home" aria-label="The 25th Hour, home">
+          <svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false">
+            <path d="M24.9 8.6A12 12 0 1 0 28 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M16 9.5V16l4.2 2.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="brand-text">The <span class="brand-25">25</span>th Hour</span>
         </a>
-        <nav class="primary-nav" aria-label="Primary navigation">
-          <button type="button" class="nav-tab" data-screen="week">My Week</button>
-          <button type="button" class="nav-tab" data-screen="check">Should I Say Yes?</button>
-          <button type="button" class="nav-tab" data-screen="rescue">Make It Work</button>
-          <button type="button" class="nav-tab" data-screen="feedback">Did It Work?</button>
-          <button type="button" class="nav-tab" data-screen="settings">Settings</button>
-        </nav>
+        <div class="topbar-links">
+          <span id="example-chip" class="example-chip" hidden>
+            <span>Example data</span>
+            <button type="button" id="leave-example" class="link-button">Leave example</button>
+          </span>
+          <a class="topbar-link" id="nav-week" href="#/week" data-screen="week">My week</a>
+        </div>
       </div>
     </header>
-
-    <section class="hero" id="hero-banner" aria-label="Product overview">
-      <div class="hero-inner">
-        <div class="hero-copy">
-          <span class="eyebrow"><span class="eyebrow-icon" aria-hidden="true">✧</span> YOUR NEXT YES, UNDERSTOOD</span>
-          <h1>Know what your<br><em>next yes</em> will cost.</h1>
-          <p>Before you take on more, see what fits by every deadline — and the smallest verified changes that work without borrowing from sleep.</p>
-          <div class="hero-pills">
-            <span>Protected sleep: <strong id="hero-sleep-pill">23:00–07:00</strong></span>
-            <span>Three estimates: <strong>Optimistic · Typical · Conservative</strong></span>
-            <span>Deterministic · <strong>100% local in your browser</strong></span>
-          </div>
-        </div>
-        <div class="hero-art" aria-hidden="true">
-          <div class="orb orb-one"></div>
-          <div class="orb orb-two"></div>
-          <div class="art-card">
-            <div class="art-line"></div>
-            <div class="art-title">YOUR WEEK HAS A LIMIT</div>
-            <div class="art-big">24<span>h</span></div>
-            <div class="art-bands"><span></span><span></span><span></span><span></span></div>
-            <div class="art-foot">Make room for what matters.</div>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <main id="main-content" class="workspace" tabindex="-1">
       <div id="status-region" class="status-banner" role="status" aria-live="polite" hidden></div>
       <div id="error-region" class="banner banner-alert" role="alert" hidden></div>
 
-      <section id="screen-week" class="screen-panel" aria-label="My Week"></section>
-      <section id="screen-check" class="screen-panel" aria-label="Should I Say Yes?" hidden></section>
-      <section id="screen-rescue" class="screen-panel" aria-label="Make It Work" hidden></section>
-      <section id="screen-feedback" class="screen-panel" aria-label="Did It Work?" hidden></section>
+      <section id="screen-home" class="screen-panel" aria-label="Home"></section>
+      <section id="screen-check" class="screen-panel" aria-label="Check a request" hidden></section>
+      <section id="screen-week" class="screen-panel" aria-label="My week" hidden></section>
+      <section id="screen-rescue" class="screen-panel" aria-label="Reset" hidden></section>
+      <section id="screen-feedback" class="screen-panel" aria-label="Review" hidden></section>
       <section id="screen-settings" class="screen-panel" aria-label="Settings" hidden></section>
     </main>
 
     <footer class="site-footer">
-      <div class="footer-inner">
-        <span>The 25th Hour · Local-first planning tool (not medical advice). All data stays in your browser.</span>
-        <span>A feasible plan makes room to sleep; it can't guarantee sleep.</span>
-      </div>
+      <p>Everything stays in this browser. A feasible plan makes room to sleep; it can't guarantee sleep. Not medical advice.</p>
     </footer>
   </div>
   <script type="module" src="./src/ui/app.mjs"></script>

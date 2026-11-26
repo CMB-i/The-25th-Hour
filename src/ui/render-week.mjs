@@ -1,7 +1,8 @@
 import { plannedSleepMinutes } from '../engine/capacity.mjs';
-import { weekdayName } from '../engine/dates.mjs';
 import { deadlineCost } from '../engine/evaluate.mjs';
+import { campusDate } from '../engine/feedback.mjs';
 import { LOADED_WEEKS } from '../engine/weeks.mjs';
+import { hoursPhrase } from './check-model.mjs';
 import {
   buildVerdictCopy,
   fmtHours,
@@ -9,452 +10,385 @@ import {
   fmtShortDate,
   fmtShortWeekday,
   fmtSignedHours,
-  fmtTimestamp,
   h,
   taskTag,
   taskTagLabel,
   verdictClass,
-  verdictIcon,
   verdictLabel
 } from './dom.mjs';
+import {
+  calendarStatusText,
+  createImportMessage,
+  renderBusyForm,
+  renderCalendarImport,
+  renderPasteImport
+} from './import-controls.mjs';
 import { renderTimeline } from './render-timeline.mjs';
+import { isSetUp } from './state.mjs';
+import { buildAgenda, calendarStatus } from './week-model.mjs';
 
-const STALE_CALENDAR_MS = 86_400_000;
+// Which day the phone-width agenda is showing. UI-only.
+let selectedDay = null;
+let pendingFocus = null;
 
-function renderFreshnessBanner(state, dispatch) {
-  const parsedImport = state.calendarImportedAt ? Date.parse(state.calendarImportedAt) : NaN;
-  const isStale = !Number.isFinite(parsedImport) || (Date.now() - parsedImport > STALE_CALENDAR_MS);
-
-  const calendarText = state.calendarImportedAt
-    ? `Based on your calendar from ${fmtTimestamp(state.calendarImportedAt)}.`
-    : 'No calendar imported yet (using weekly availability template).';
-  const editText = state.lastEditedAt ? `Last edited ${fmtTimestamp(state.lastEditedAt)}.` : '';
-
-  return h('div', { className: 'freshness-stack' },
-    isStale
-      ? h('div', { className: 'banner banner-warn', role: 'status' },
-          h('div', { className: 'banner-body' },
-            h('strong', {}, 'Calendar freshness: '),
-            'Your calendar may be out of date. Re-import before relying on this.'
-          ),
-          h('button', {
-            type: 'button',
-            className: 'button button-outline button-sm',
-            onClick: () => dispatch({ type: 'NAVIGATE', screen: 'settings' })
-          }, 'Go to Imports')
-        )
-      : null,
-    h('div', { className: 'freshness-meta' },
-      h('span', { className: 'status-dot', 'aria-hidden': 'true' }),
-      h('span', {}, [calendarText, editText].filter(Boolean).join(' '))
-    )
-  );
+function pickSelectedDay(state, derived) {
+  const indices = derived.week.dayIndices;
+  if (selectedDay !== null && indices.includes(selectedDay)) return selectedDay;
+  const today = state.demo ? null : campusDate(new Date().toISOString());
+  const todayIndex = today ? state.days.findIndex(day => day.date === today) : -1;
+  selectedDay = indices.includes(todayIndex) ? todayIndex : indices[0];
+  return selectedDay;
 }
 
-function renderDemoPanel(state, dispatch) {
-  return h('section', { className: 'panel control-panel', 'aria-label': 'Workspace controls and demo scenarios' },
-    h('div', { className: 'panel-label' },
-      h('span', { className: 'panel-index' }, '01'),
-      'COMMITMENT WORKSPACE'
-    ),
-    h('h3', {}, 'Weekly workload check'),
-    h('p', { className: 'helper' },
-      'Switch between the built-in Scenarios A & B, test workload changes, or add a new commitment.'
-    ),
-    h('div', { className: 'quick-actions' },
-      h('button', {
-        type: 'button',
-        className: 'button button-primary',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'check' })
-      }, '+ Check a new commitment'),
-      h('button', {
-        type: 'button',
-        className: 'button button-secondary',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-      }, 'Open Make It Work'),
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'settings' })
-      }, 'Import calendar / tasks')
-    ),
-    h('div', { className: 'scenario-block' },
-      h('span', { className: 'field-eyebrow' }, 'BUILT-IN DEMO SCENARIOS'),
-      h('div', { className: 'scenario-choices', role: 'group', 'aria-label': 'Demo scenarios' },
-        h('button', {
-          type: 'button',
-          className: `scenario-button${state.demo && !state.fixed ? ' active' : ''}`,
-          'aria-pressed': String(Boolean(state.demo && !state.fixed)),
-          onClick: () => dispatch({ type: 'LOAD_DEMO', fixed: false })
-        },
-          h('b', {}, '01'),
-          h('span', {},
-            h('strong', {}, 'Flexible target (Scenario A)'),
-            h('small', {}, 'Club poster target can move from Thu to Fri')
-          )
-        ),
-        h('button', {
-          type: 'button',
-          className: `scenario-button${state.demo && state.fixed ? ' active' : ''}`,
-          'aria-pressed': String(Boolean(state.demo && state.fixed)),
-          onClick: () => dispatch({ type: 'LOAD_DEMO', fixed: true })
-        },
-          h('b', {}, '02'),
-          h('span', {},
-            h('strong', {}, 'All deadlines fixed (Scenario B)'),
-            h('small', {}, 'Poster extension requires approval')
-          )
-        )
-      )
-    ),
-    state.demo
-      ? h('div', { className: 'research-box' },
-          h('label', { className: 'check-line' },
-            h('input', {
-              type: 'checkbox',
-              checked: state.includeResearch,
-              onChange: ev => dispatch({
-                type: 'UPDATE_DEMO_RESEARCH',
-                includeResearch: ev.currentTarget.checked,
-                researchHours: state.researchHours
-              })
-            }),
-            h('span', {},
-              h('strong', {}, 'Include demo research proposal'),
-              h('small', {}, 'Due Thursday · 2026-11-19 (droppable proposal)')
-            )
-          ),
-          h('div', { className: 'range-head' },
-            h('label', { for: 'demo-research-range' }, 'Typical hours needed'),
-            h('strong', {}, fmtHours(state.researchHours))
-          ),
-          h('input', {
-            id: 'demo-research-range',
-            className: 'hour-range',
-            type: 'range',
-            min: '4',
-            max: '6',
-            step: '0.5',
-            value: String(state.researchHours),
-            disabled: !state.includeResearch,
-            'aria-label': 'Demo research typical hours',
-            onChange: ev => dispatch({
-              type: 'UPDATE_DEMO_RESEARCH',
-              includeResearch: state.includeResearch,
-              researchHours: Number(ev.currentTarget.value)
-            })
-          }),
-          h('div', { className: 'range-ends' },
-            h('span', {}, '4h'),
-            h('span', {}, '5h'),
-            h('span', {}, '6h')
-          ),
-          h('div', { className: 'estimate-note' },
-            state.includeResearch
-              ? `Planning range: ${fmtHours(state.researchHours - 1)}–${fmtHours(state.researchHours + 1)} (optimistic to conservative).`
-              : 'Research proposal excluded (Scenario D baseline).'
-          )
-        )
+function renderSummary(state, derived, dispatch) {
+  const { evaluation, weekly, repairs } = derived;
+  const copy = buildVerdictCopy(evaluation, state.days);
+  const cls = verdictClass(evaluation.verdict);
+  const tone = cls === 'alert' ? 'short' : cls === 'risk' ? 'tight' : 'fits';
+  const atRisk = evaluation.verdict !== 'feasible';
+
+  if (!derived.activeTasks.length) {
+    return h('section', { id: 'week-verdict', className: 'verdict-block verdict-fits', 'aria-live': 'polite' },
+      h('p', { className: 'verdict-word verdict-word-fits' }, 'Nothing due'),
+      h('h2', { className: 'verdict-headline week-headline' }, 'No deadlines in the weeks loaded.'),
+      h('p', { className: 'verdict-detail' }, 'Check a request to see what it would cost, or add deadlines below.')
+    );
+  }
+
+  return h('section', { id: 'week-verdict', className: `verdict-block verdict-${tone}`, 'aria-live': 'polite' },
+    h('p', { className: `verdict-word verdict-word-${tone}` }, verdictLabel(evaluation.verdict)),
+    h('h2', { className: 'verdict-headline week-headline' }, copy.headline),
+    h('p', { className: 'verdict-detail' }, copy.body),
+    copy.contributingText ? h('p', { className: 'verdict-note' }, copy.contributingText) : null,
+    copy.releaseNote ? h('p', { className: 'verdict-note' }, copy.releaseNote) : null,
+    h('p', { className: 'verdict-note' },
+      `This week: ${fmtMinutes(weekly.requiredMinutes)} of work, ${fmtMinutes(weekly.capacityMinutes)} free after busy blocks and sleep.`),
+    atRisk
+      ? h('div', { className: 'section-actions' },
+          h('button', {
+            type: 'button',
+            id: 'week-reset',
+            className: 'button button-primary',
+            onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
+          }, repairs.length ? 'See what can move' : 'See your options'))
       : null
   );
 }
 
-function renderVerdictCard(state, derived, dispatch) {
-  const { evaluation, weekly, bindingCost, conservativeCost, repairs } = derived;
-  const copy = buildVerdictCopy(evaluation, state.days);
-  const cls = verdictClass(evaluation.verdict);
-  const icon = verdictIcon(evaluation.verdict);
-  const label = verdictLabel(evaluation.verdict);
+function renderStrip(agenda, picked, rerender) {
+  return h('div', { className: 'date-strip', role: 'group', 'aria-label': 'Days this week' },
+    agenda.map(day =>
+      h('button', {
+        type: 'button',
+        className: `strip-day${day.index === picked ? ' is-selected' : ''}`,
+        'aria-pressed': String(day.index === picked),
+        onClick: () => { selectedDay = day.index; rerender(); }
+      },
+        h('span', { className: 'strip-weekday' }, day.weekday.slice(0, 3)),
+        h('span', { className: 'strip-date' }, fmtShortDate(day.date).split(' ')[0]),
+        day.due.length ? h('span', { className: 'strip-due' }, `${day.due.length} due`) : null
+      ))
+  );
+}
 
-  const conservativeNote =
-    evaluation.verdict === 'infeasible' && conservativeCost && conservativeCost.shortfallHours > 0
-      ? `At conservative estimates, ${conservativeCost.weekday} (${conservativeCost.date}) is ${fmtHours(conservativeCost.shortfallHours)} short.`
-      : '';
+function renderAgenda(agenda, picked) {
+  return h('div', { className: 'agenda', id: 'agenda' },
+    agenda.map(day =>
+      h('article', {
+        className: `agenda-day${day.index === picked ? ' is-selected' : ''}`,
+        'aria-label': day.label
+      },
+        h('h3', {}, day.label),
+        day.due.length
+          ? h('ul', { className: 'agenda-due' },
+              day.due.map(item =>
+                h('li', {}, h('strong', {}, 'Due: '), `${item.title}, ${hoursPhrase(item.hours)}${item.isProposal ? ' (proposed)' : ''}`)))
+          : null,
+        day.entries.length
+          ? h('ul', { className: 'agenda-entries' },
+              day.entries.map(entry =>
+                h('li', { className: `agenda-entry agenda-${entry.kind}` },
+                  h('span', { className: 'agenda-time' }, entry.time),
+                  h('span', { className: 'agenda-label' }, entry.label))))
+          : h('p', { className: 'agenda-empty' },
+              day.hasWindows ? `Nothing planned. ${hoursPhrase(day.freeHours)} free.` : 'No work hours set for this day.')
+      ))
+  );
+}
 
-  const tightestMetricValue = bindingCost ? fmtSignedHours(bindingCost.marginHours) : '✓';
-  const tightestMetricSub = bindingCost
-    ? `${fmtShortWeekday(bindingCost.date)} margin`
-    : 'No deadlines';
-  const tightestNegative = Boolean(bindingCost && bindingCost.marginHours < 0);
-
-  return h('section', {
-    id: 'week-verdict',
-    className: `verdict-card ${cls}`,
-    'aria-live': 'polite'
-  },
-    h('div', { className: 'verdict-left' },
-      h('div', { className: 'verdict-top' },
-        h('span', { className: `verdict-badge ${cls}` }, `${icon} ${label.toUpperCase()}`),
-        h('span', {}, 'LIVE SCHEDULE CHECK')
-      ),
-      h('h2', {}, copy.headline),
-      h('p', { className: 'verdict-body' }, copy.body),
-      copy.contributingText ? h('p', { className: 'verdict-contrib' }, copy.contributingText) : null,
-      copy.releaseNote ? h('p', { className: 'verdict-contrib' }, copy.releaseNote) : null,
-      conservativeNote ? h('p', { className: 'verdict-contrib' }, conservativeNote) : null,
-      repairs.length > 0
-        ? h('div', { className: 'verdict-cta' },
-            h('button', {
-              type: 'button',
-              className: 'button button-primary',
-              onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-            }, `See ${Math.min(5, repairs.length)} verified fix${repairs.length === 1 ? '' : 'es'} in Make It Work →`)
-          )
-        : evaluation.verdict !== 'feasible'
-          ? h('div', { className: 'verdict-cta' },
-              h('button', {
-                type: 'button',
-                className: 'button button-outline',
-                onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-              }, 'Check options in Make It Work →')
-            )
-          : null
-    ),
-    h('div', { className: 'verdict-metrics' },
-      h('div', { className: 'metric' },
-        h('b', {}, fmtMinutes(weekly.requiredMinutes)),
-        h('small', {}, 'Required this week')
-      ),
-      h('div', { className: 'metric' },
-        h('b', {}, fmtMinutes(weekly.capacityMinutes)),
-        h('small', {}, 'Available this week')
-      ),
-      h('div', { className: `metric ${tightestNegative ? 'negative' : 'positive'}` },
-        h('b', {}, tightestMetricValue),
-        h('small', {}, tightestMetricSub)
-      )
+function renderBusyPanel(state, agenda, dispatch, message) {
+  const cal = calendarStatus(state);
+  const blocks = agenda.filter(day => state.days[day.index].busyWindows.length);
+  return h('section', { id: 'busy-panel', className: 'week-section' },
+    h('h3', {}, 'When are you busy?'),
+    h('p', { className: 'section-help' },
+      'Fixed blocks like classes, shifts and appointments. They come off your free time before any work is planned.'),
+    cal.kind === 'none'
+      ? h('p', { className: 'status-line' },
+          'No calendar has been imported. The check is using only the busy blocks you add here, your work hours and your sleep.')
+      : h('p', { className: `status-line${cal.stale ? ' is-warning' : ''}` },
+          cal.stale
+            ? `${calendarStatusText(state)} That was over a day ago, so import it again before relying on this.`
+            : calendarStatusText(state)),
+    blocks.length
+      ? h('ul', { className: 'plain-list' },
+          blocks.map(day =>
+            h('li', {},
+              h('strong', {}, day.label),
+              ': ',
+              state.days[day.index].busyWindows.map(([start, end]) => `${start}–${end}`).join(', '))))
+      : h('p', { className: 'agenda-empty' }, 'No busy blocks this week.'),
+    h('details', { className: 'quiet-details', id: 'busy-edit' },
+      h('summary', {}, 'Add or import busy time'),
+      renderBusyForm({ days: agenda, dispatch, idPrefix: 'week-busy' }),
+      renderCalendarImport({ state, dispatch, message })
     )
   );
 }
 
-function renderComparisonCards(derived, dispatch) {
+function renderTodoPanel(state, derived, dispatch, message) {
+  const inWeek = derived.activeTasks.filter(task => derived.week.dayIndices.includes(task.targetDay));
+  const elsewhere = derived.activeTasks.length - inWeek.length;
+  return h('section', { id: 'todo-panel', className: 'week-section' },
+    h('h3', {}, 'What still needs doing?'),
+    h('p', { className: 'section-help' },
+      'Deadline work. It is planned into the free time left after busy blocks and sleep.'),
+    inWeek.length
+      ? h('ul', { className: 'plain-list' },
+          inWeek.map(task => {
+            const targetDate = state.days[task.targetDay]?.date;
+            const hardDate = state.days[task.hardDay]?.date;
+            return h('li', {},
+              h('strong', {}, task.title),
+              task.isProposal ? ' (proposed)' : '',
+              `, ${hoursPhrase(task.likely)}, due ${fmtShortWeekday(targetDate)} ${fmtShortDate(targetDate)}`,
+              task.hardDay !== task.targetDay && hardDate ? `, can slip to ${fmtShortWeekday(hardDate)}` : '',
+              ` · ${taskTagLabel(taskTag(task))}`);
+          }))
+      : h('p', { className: 'agenda-empty' }, 'No deadline work due this week.'),
+    elsewhere > 0
+      ? h('p', { className: 'section-help' }, `${elsewhere} more due in other loaded weeks.`)
+      : null,
+    h('div', { className: 'section-actions' },
+      h('button', {
+        type: 'button', className: 'link-button',
+        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'check' })
+      }, 'Check a new request')
+    ),
+    h('details', { className: 'quiet-details', id: 'todo-edit' },
+      h('summary', {}, 'Add deadlines in bulk'),
+      renderPasteImport({ dispatch, message })
+    )
+  );
+}
+
+function renderEstimateTable(state, derived) {
+  const levels = [
+    ['optimistic', 'If everything goes quickly'],
+    ['typical', 'As estimated'],
+    ['conservative', 'If everything runs long']
+  ];
+  return h('div', { className: 'estimate-table' },
+    levels.map(([key, label]) => {
+      const schedule = derived.evaluation[key];
+      const cost = deadlineCost(schedule, state.days);
+      const text = cost ? `${fmtShortWeekday(cost.date)} ${fmtSignedHours(cost.marginHours)}` : 'No deadlines';
+      return h('div', { className: 'estimate-row' },
+        h('strong', {}, label),
+        h('span', { className: cost && cost.marginHours < 0 ? 'not-ok' : 'ok' }, text),
+        h('span', { className: schedule.feasible ? 'ok' : 'not-ok' }, schedule.feasible ? 'Fits' : "Doesn't fit")
+      );
+    })
+  );
+}
+
+function renderExampleView(state, derived, dispatch) {
   const { evaluation, weekly, bindingCost, repairs } = derived;
   const top = repairs[0];
-  const baselineTag = weekly.feasible ? 'Fits in weekly total' : 'Over weekly total';
   const schedulerTag = evaluation.typical.feasible
     ? 'Meets entered targets'
     : bindingCost
       ? `${fmtHours(bindingCost.shortfallHours)} short by ${bindingCost.weekday}`
       : `${fmtMinutes(evaluation.typical.lateMinutes)} deadline shortfall`;
-
   const rescueStatus = top
     ? (top.needsApproval ? 'Approval request needed' : 'Self-serve repair found')
-    : (evaluation.verdict === 'feasible'
-        ? 'No change needed'
-        : evaluation.verdict === 'at-risk'
-          ? 'Monitor narrow buffer'
-          : 'No verified fix');
-
-  return h('section', { className: 'panel comparison', 'aria-label': 'Three-way comparison' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('div', { className: 'panel-label' },
-          h('span', { className: 'panel-index' }, '02'),
-          'SIDE-BY-SIDE'
-        ),
-        h('h3', {}, 'Three ways to check one week.')
-      ),
-      h('span', { className: 'comparison-chip' }, 'Same inputs · simulated comparison')
+    : (evaluation.verdict === 'feasible' ? 'No change needed' : evaluation.verdict === 'at-risk' ? 'Monitor narrow buffer' : 'No verified fix');
+  return h('details', { className: 'quiet-details example-view', id: 'example-view' },
+    h('summary', {}, 'Example view: three ways to check one week'),
+    h('p', { className: 'section-help' }, 'Example data only. The same week, judged three ways.'),
+    h('ul', { className: 'compare-list' },
+      h('li', {},
+        h('strong', {}, 'Weekly hours only (simulated baseline)'),
+        h('span', {}, `${weekly.feasible ? 'Fits' : 'Over'}: ${fmtMinutes(weekly.requiredMinutes)} of ${fmtMinutes(weekly.capacityMinutes)} available this week. Ignores which hours fall before each deadline.`)),
+      h('li', {},
+        h('strong', {}, 'Deadline-aware scheduler (same allocation, no repair step)'),
+        h('span', {}, `${evaluation.typical.feasible ? 'Fits' : 'Misses'}: ${schedulerTag}.`)),
+      h('li', {},
+        h('strong', {}, 'The 25th Hour'),
+        h('span', {}, `${rescueStatus}. Tests changes against every deadline with sleep protected.`))
     ),
-    h('div', { className: 'comparison-cards' },
-      h('article', { className: 'compare-card' },
-        h('div', { className: 'compare-label' }, 'Weekly hours only (simulated baseline)'),
-        h('div', { className: 'compare-num' }, weekly.feasible ? '✓ Fits' : '✕ Over'),
-        h('div', { className: 'compare-body' },
-          `${fmtMinutes(weekly.requiredMinutes)} of ${fmtMinutes(weekly.capacityMinutes)} available this week. Ignores which hours fall before each deadline.`
-        ),
-        h('div', { className: `compare-tag${weekly.feasible ? ' positive' : ''}` }, baselineTag)
+    h('div', { className: 'section-actions' },
+      h('button', {
+        type: 'button', className: `scenario-button button ${!state.fixed ? 'button-secondary' : 'button-quiet'}`,
+        'aria-pressed': String(!state.fixed),
+        onClick: () => dispatch({ type: 'LOAD_DEMO', fixed: false })
+      }, 'Flexible target (Scenario A)'),
+      h('button', {
+        type: 'button', className: `scenario-button button ${state.fixed ? 'button-secondary' : 'button-quiet'}`,
+        'aria-pressed': String(state.fixed),
+        onClick: () => dispatch({ type: 'LOAD_DEMO', fixed: true })
+      }, 'All deadlines fixed (Scenario B)')
+    ),
+    h('div', { className: 'research-box' },
+      h('label', { className: 'check-line' },
+        h('input', {
+          type: 'checkbox',
+          checked: state.includeResearch,
+          onChange: ev => dispatch({
+            type: 'UPDATE_DEMO_RESEARCH',
+            includeResearch: ev.currentTarget.checked,
+            researchHours: state.researchHours
+          })
+        }),
+        h('span', {}, 'Include the sample research project')
       ),
-      h('article', { className: 'compare-card' },
-        h('div', { className: 'compare-label' }, 'Deadline-aware scheduler (same allocation, no repair step)'),
-        h('div', { className: 'compare-num' }, evaluation.typical.feasible ? '✓ Fits' : '✕ Misses'),
-        h('div', { className: 'compare-body' },
-          'Runs the same earliest-deadline allocation and flags timing conflicts, without testing verified adjustments.'
-        ),
-        h('div', { className: `compare-tag${evaluation.typical.feasible ? ' positive' : ''}` }, schedulerTag)
-      ),
-      h('article', { className: 'compare-card highlight' },
-        h('div', { className: 'compare-label' }, 'The 25th Hour'),
-        h('div', { className: 'compare-num' },
-          top ? '↗ Repair' : evaluation.verdict === 'feasible' ? '✓ Ready' : '▲ Watch'
-        ),
-        h('div', { className: 'compare-body' },
-          'Tests 1–2 candidate changes, re-checks every deadline and protected sleep slot, and separates self-serve fixes from approval requests.'
-        ),
-        h('div', { className: `compare-tag${top && !top.needsApproval ? ' positive' : ''}` }, rescueStatus),
-        top
-          ? h('button', {
-              type: 'button',
-              className: 'button button-outline button-sm compare-btn',
-              onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-            }, 'Review in Make It Work')
-          : null
-      )
+      h('label', { for: 'demo-research-range' }, `Sample research project: ${fmtHours(state.researchHours)}`),
+      h('input', {
+        id: 'demo-research-range', className: 'hour-range', type: 'range', min: '4', max: '6', step: '0.5',
+        value: String(state.researchHours), disabled: !state.includeResearch,
+        'aria-label': 'Sample research project typical hours',
+        onChange: ev => dispatch({
+          type: 'UPDATE_DEMO_RESEARCH', includeResearch: state.includeResearch,
+          researchHours: Number(ev.currentTarget.value)
+        })
+      })
     )
-  );
-}
-
-function renderUncertaintyPanel(state, derived) {
-  const levels = [
-    ['optimistic', 'Optimistic'],
-    ['typical', 'Typical'],
-    ['conservative', 'Conservative']
-  ];
-
-  const rows = levels.map(([key, label]) => {
-    const sched = derived.evaluation[key];
-    const cost = deadlineCost(sched, state.days);
-    const bindingText = cost
-      ? `${fmtShortWeekday(cost.date)} ${fmtSignedHours(cost.marginHours)}`
-      : 'No deadlines';
-    const isShort = Boolean(cost && cost.marginHours < 0);
-    return h('div', { className: 'estimate-row' },
-      h('strong', {}, label),
-      h('span', { className: isShort ? 'not-ok' : 'ok' }, bindingText),
-      h('strong', { className: sched.feasible ? 'ok' : 'not-ok' }, sched.feasible ? '✓ Fit' : '✕ Miss')
-    );
-  });
-
-  return h('section', { className: 'panel uncertainty-panel' },
-    h('span', { className: 'panel-label' }, 'ESTIMATE UNCERTAINTY'),
-    h('h3', {}, 'Three-estimate check'),
-    h('p', { className: 'helper' },
-      'Every schedule is checked at optimistic, typical, and conservative task hours on the tightest deadline.'
-    ),
-    h('div', { className: 'estimate-table' },
-      h('div', { className: 'estimate-row header' },
-        h('span', {}, 'ASSUMPTION'),
-        h('span', {}, 'TIGHTEST DAY'),
-        h('span', {}, 'DEADLINES')
-      ),
-      rows
-    ),
-    h('div', { className: 'risk-note' },
-      `${derived.evaluation.reason} A feasible plan makes room to sleep; it can't guarantee sleep.`
-    )
-  );
-}
-
-function renderTaskList(state, derived) {
-  const inWeek = derived.activeTasks.filter(task => derived.week.dayIndices.includes(task.targetDay));
-  const otherWeeksCount = derived.activeTasks.filter(task => !derived.week.dayIndices.includes(task.targetDay)).length;
-
-  const taskRow = task => {
-    const tag = taskTag(task);
-    const targetDate = state.days[task.targetDay]?.date;
-    const hardDate = state.days[task.hardDay]?.date;
-    const rangeInfo = task.min !== task.max
-      ? `${fmtHours(task.likely)} typical (${fmtHours(task.min)}–${fmtHours(task.max)})`
-      : fmtHours(task.likely);
-    const deadlineInfo = task.hardDay !== task.targetDay && hardDate
-      ? `${fmtShortWeekday(targetDate)} ${fmtShortDate(targetDate)} target · ${fmtShortWeekday(hardDate)} ${fmtShortDate(hardDate)} hard limit`
-      : `${fmtShortWeekday(targetDate)} ${fmtShortDate(targetDate)} deadline`;
-
-    return h('li', { className: `task-row${task.removed ? ' is-removed' : ''}` },
-      h('div', { className: 'task-row-title' },
-        h('strong', {},
-          task.title,
-          task.isProposal ? h('span', { className: 'inline-chip' }, 'Proposal') : null,
-          task.removed ? h('span', { className: 'inline-chip removed' }, 'Removed') : null
-        ),
-        h('small', {}, `${rangeInfo} · ${deadlineInfo}`)
-      ),
-      h('span', { className: `task-pill ${tag}` }, taskTagLabel(tag))
-    );
-  };
-
-  return h('section', { className: 'panel commitments-panel' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('span', { className: 'panel-label' }, 'COMMITMENTS THIS WEEK'),
-        h('h3', {}, 'Scheduled commitments & deadlines')
-      ),
-      h('span', { className: 'pill' }, `${inWeek.length} in week ${derived.weekIndex + 1}`)
-    ),
-    inWeek.length
-      ? h('ul', { className: 'task-list' }, inWeek.map(taskRow))
-      : h('p', { className: 'helper' }, 'No open commitments due in this week.'),
-    otherWeeksCount > 0
-      ? h('p', { className: 'helper other-weeks-note' },
-          `${otherWeeksCount} additional commitment${otherWeeksCount === 1 ? '' : 's'} due in other loaded weeks.`
-        )
-      : null
   );
 }
 
 /**
- * Renders Screen 1: My Week.
+ * Renders My week: summary, a date strip with an agenda, the two kinds of input, and details.
  */
-export function renderWeekScreen(container, { state, derived, dispatch }) {
-  const sleepMinutes = plannedSleepMinutes(state.sleep);
+export function renderWeekScreen(container, ctx) {
+  const { state, derived, dispatch } = ctx;
+  const rerender = () => renderWeekScreen(container, ctx);
+  const picked = pickSelectedDay(state, derived);
+  const agenda = buildAgenda({ state, derived });
   const totalWeeks = Math.max(1, derived.maxWeekIndex + 1);
-  const rangeLabel = `Week ${derived.weekIndex + 1} of ${totalWeeks} · ${fmtShortDate(derived.week.startDate)} – ${fmtShortDate(derived.week.endDate)}, ${derived.week.startDate.slice(0, 4)}`;
+  const message = createImportMessage(state);
+  const sleepMinutes = plannedSleepMinutes(state.sleep);
+  const noWindows = !state.days.some(day => (day.workWindows ?? []).length);
+  const pending = state.proposals[0];
 
-  const unresolvedBanner = state.unresolvedConflict && !derived.evaluation.typical.feasible
-    ? h('div', { className: 'banner banner-alert', role: 'status' },
-        h('div', { className: 'banner-body' },
-          h('strong', {}, 'Unresolved deadline conflict: '),
-          'You accepted a commitment while the schedule was infeasible. Protected sleep slots remain untouched, and the conflict stays visible until resolved.'
-        ),
+  const banner = (text, label, screen, id) =>
+    h('div', { className: 'return-banner' },
+      h('span', {}, text),
+      h('button', {
+        type: 'button', id, className: 'link-button',
+        onClick: () => dispatch({ type: 'NAVIGATE', screen })
+      }, label));
+
+  const parts = [];
+  parts.push(
+    h('header', { className: 'week-head' },
+      h('div', {},
+        h('h1', { className: 'screen-title' }, 'My week'),
+        h('p', { className: 'screen-lede' },
+          `Week ${derived.weekIndex + 1} of ${totalWeeks}, ${fmtShortDate(derived.week.startDate)} to ${fmtShortDate(derived.week.endDate)}`)
+      ),
+      h('div', { className: 'week-pager' },
         h('button', {
-          type: 'button',
-          className: 'button button-outline button-sm',
-          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-        }, 'Review fixes')
+          type: 'button', className: 'link-button',
+          disabled: derived.weekIndex <= 0,
+          onClick: () => { selectedDay = null; dispatch({ type: 'SET_WEEK', weekIndex: derived.weekIndex - 1 }); }
+        }, 'Previous week'),
+        h('button', {
+          type: 'button', className: 'link-button',
+          disabled: derived.weekIndex >= Math.min(LOADED_WEEKS - 1, derived.maxWeekIndex),
+          onClick: () => { selectedDay = null; dispatch({ type: 'SET_WEEK', weekIndex: derived.weekIndex + 1 }); }
+        }, 'Next week')
       )
-    : null;
-
-  const sleepStrip = h('div', { className: 'sleep-strip' },
-    h('div', {},
-      h('strong', {}, `Protected sleep time: ${state.sleep.start}–${state.sleep.end} (${fmtMinutes(sleepMinutes)}/night)`),
-      h('span', {}, 'Excluded before any work is scheduled.')
-    ),
-    h('small', {}, "A feasible plan makes room to sleep; it can't guarantee sleep.")
+    )
   );
 
-  const weekControls = h('div', { className: 'week-nav-bar panel' },
-    h('div', { className: 'week-nav-buttons' },
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        disabled: derived.weekIndex <= 0,
-        onClick: () => dispatch({ type: 'SET_WEEK', weekIndex: derived.weekIndex - 1 })
-      }, '← Previous week'),
-      h('span', { className: 'week-range-label' }, rangeLabel),
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        disabled: derived.weekIndex >= Math.min(LOADED_WEEKS - 1, derived.maxWeekIndex),
-        onClick: () => dispatch({ type: 'SET_WEEK', weekIndex: derived.weekIndex + 1 })
-      }, 'Next week →')
-    ),
-    sleepStrip
+  if (pending) {
+    parts.push(banner(`You're checking "${pending.title}".`, 'Back to your request', 'check', 'back-to-request'));
+  }
+  if (!state.demo && !isSetUp(state)) {
+    parts.push(banner('Nothing is set up yet, so there is nothing to count.', 'Set up my week', 'settings', 'setup-week'));
+  } else if (noWindows) {
+    parts.push(banner('No work hours are set, so no work can be planned.', 'Set work hours', 'settings', 'set-hours'));
+  }
+  if (state.unresolvedConflict && !derived.evaluation.typical.feasible) {
+    parts.push(h('p', { className: 'status-line is-warning' },
+      'You added something that did not fit, so the gap below is still open.'));
+  }
+
+  parts.push(renderSummary(state, derived, dispatch));
+  parts.push(message.box);
+
+  parts.push(
+    h('section', { className: 'week-agenda', 'aria-label': 'Agenda' },
+      renderStrip(agenda, picked, rerender),
+      renderAgenda(agenda, picked)
+    )
   );
 
-  container.replaceChildren(
-    renderFreshnessBanner(state, dispatch),
-    unresolvedBanner ?? '',
-    h('div', { className: 'workspace-grid' },
-      renderDemoPanel(state, dispatch),
-      h('div', { className: 'results-panel' },
-        renderVerdictCard(state, derived, dispatch),
-        renderComparisonCards(derived, dispatch)
-      )
-    ),
-    weekControls,
-    h('div', { className: 'deep-grid' },
+  parts.push(
+    h('div', { className: 'week-inputs' },
+      renderBusyPanel(state, agenda, dispatch, message),
+      renderTodoPanel(state, derived, dispatch, message)
+    )
+  );
+
+  parts.push(
+    h('details', { className: 'quiet-details', id: 'schedule-details' },
+      h('summary', {}, 'Schedule details'),
+      h('p', { className: 'section-help' },
+        `Protected sleep ${state.sleep.start}–${state.sleep.end} (${fmtMinutes(sleepMinutes)} a night) is taken out first.`),
+      renderEstimateTable(state, derived),
       renderTimeline({
         scheduleResult: derived.evaluation.typical,
         days: state.days,
         sleep: state.sleep,
         dayIndices: derived.week.dayIndices,
         tasks: derived.activeTasks,
-        title: `Week ${derived.weekIndex + 1} schedule (${fmtShortDate(derived.week.startDate)}–${fmtShortDate(derived.week.endDate)})`,
-        kicker: 'TIME ALLOCATION · 30-MIN SLOTS',
+        title: `Week ${derived.weekIndex + 1} in 30-minute slots`,
+        kicker: 'SCHEDULE DETAILS',
         isPreview: false
-      }),
-      renderUncertaintyPanel(state, derived)
-    ),
-    renderTaskList(state, derived)
+      })
+    )
   );
+
+  if (state.demo) parts.push(renderExampleView(state, derived, dispatch));
+
+  parts.push(
+    h('nav', { className: 'week-links', 'aria-label': 'More from My week' },
+      h('button', {
+        type: 'button', id: 'link-review', className: 'link-button',
+        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'feedback' })
+      }, 'Review how estimates went'),
+      h('button', {
+        type: 'button', id: 'link-settings', className: 'link-button',
+        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'settings' })
+      }, 'Settings'),
+      derived.evaluation.verdict !== 'feasible'
+        ? h('button', {
+            type: 'button', id: 'link-reset', className: 'link-button',
+            onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
+          }, 'See what can move')
+        : null
+    )
+  );
+
+  container.replaceChildren(...parts);
+  if (pendingFocus) {
+    container.querySelector(pendingFocus)?.focus();
+    pendingFocus = null;
+  }
+}
+
+/** Lets other screens open My week with a control focused. */
+export function focusWeekSection(selector) {
+  pendingFocus = selector;
 }
