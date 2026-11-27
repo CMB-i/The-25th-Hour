@@ -1,7 +1,10 @@
-import { h } from './dom.mjs';
+import { h, setBlobTone } from './dom.mjs';
 import { renderHomeScreen } from './render-home.mjs';
 import { renderCheckScreen } from './render-check.mjs';
+import { renderCostScreen } from './render-cost.mjs';
 import { renderFeedbackScreen } from './render-feedback.mjs';
+import { isNight } from './night.mjs';
+import { renderStartScreen } from './render-start.mjs';
 import { renderRescueScreen } from './render-rescue.mjs';
 import { renderSettingsScreen } from './render-settings.mjs';
 import { renderWeekScreen } from './render-week.mjs';
@@ -12,8 +15,10 @@ const DEFAULT_SCREEN = 'home';
 
 const SCREEN_IDS = {
   home: 'screen-home',
+  start: 'screen-start',
   week: 'screen-week',
   check: 'screen-check',
+  cost: 'screen-cost',
   rescue: 'screen-rescue',
   feedback: 'screen-feedback',
   settings: 'screen-settings'
@@ -24,8 +29,10 @@ const WEEK_FAMILY = new Set(['week', 'rescue', 'feedback', 'settings']);
 
 const SCREEN_RENDERERS = {
   home: renderHomeScreen,
+  start: renderStartScreen,
   week: renderWeekScreen,
   check: renderCheckScreen,
+  cost: renderCostScreen,
   rescue: renderRescueScreen,
   feedback: renderFeedbackScreen,
   settings: renderSettingsScreen
@@ -63,6 +70,13 @@ function safeDispatch(action, { rethrow = false } = {}) {
 
 let lastScreen = null;
 
+/** Night theme: from an hour before sleep until the sleep window ends. Independent of any schedule advice. */
+function applyTheme(state) {
+  const night = isNight(new Date(), state.sleep);
+  const next = night ? 'night' : 'day';
+  if (document.documentElement.dataset.theme !== next) document.documentElement.dataset.theme = next;
+}
+
 function syncHash(screen) {
   const wanted = `#/${screen}`;
   if (window.location.hash !== wanted) {
@@ -83,20 +97,24 @@ function render(state, derived) {
       weekLink.setAttribute('aria-current', state.screen === 'week' ? 'page' : 'false');
       weekLink.classList.toggle('in-family', WEEK_FAMILY.has(state.screen));
     }
-    const chip = el('example-chip');
-    if (chip) chip.hidden = !state.demo;
 
     const status = el('status-region');
     if (status) {
       if (state.notice) {
-        status.replaceChildren(
-          h('span', {}, state.notice),
-          h('button', {
-            type: 'button',
-            className: 'link-button',
-            onClick: () => safeDispatch({ type: 'SET_NOTICE', notice: '' })
-          }, 'Dismiss')
-        );
+        const children = [h('span', {}, state.notice)];
+        if (state.undoAdd && state.undoAdd.notice === state.notice) {
+          children.push(h('button', {
+            type: 'button', id: 'notice-undo', className: 'link-button',
+            onClick: () => safeDispatch({ type: 'UNDO_ADDED' })
+          }, 'Undo'));
+        }
+        children.push(h('button', {
+          type: 'button',
+          className: 'link-button',
+          onClick: () => safeDispatch({ type: 'SET_NOTICE', notice: '' })
+        }, 'Dismiss'));
+        // Never pass null to replaceChildren: the DOM would print the word "null".
+        status.replaceChildren(...children);
         status.hidden = false;
       } else {
         status.replaceChildren();
@@ -107,6 +125,8 @@ function render(state, derived) {
     const screenChanged = lastScreen !== null && lastScreen !== state.screen;
     lastScreen = state.screen;
 
+    applyTheme(state);
+    setBlobTone('coral');
     for (const screenKey of VALID_SCREENS) {
       const panel = el(SCREEN_IDS[screenKey]);
       if (!panel) continue;
@@ -124,7 +144,10 @@ function render(state, derived) {
     syncHash(state.screen);
     if (screenChanged) {
       window.scrollTo(0, 0);
-      el('main-content')?.focus({ preventScroll: true });
+      // A screen may place focus itself (a verdict, a control); otherwise start at the page's main region.
+      if (!el(SCREEN_IDS[state.screen])?.contains(document.activeElement)) {
+        el('main-content')?.focus({ preventScroll: true });
+      }
     }
   } catch (error) {
     if (errorBox) {
@@ -133,8 +156,6 @@ function render(state, derived) {
     }
   }
 }
-
-el('leave-example')?.addEventListener('click', () => safeDispatch({ type: 'LEAVE_DEMO' }));
 
 function screenFromHash() {
   const name = window.location.hash.replace(/^#\/?/, '');
@@ -148,6 +169,7 @@ window.addEventListener('hashchange', () => {
   }
 });
 
+setInterval(() => applyTheme(store.getState()), 60_000);
 store.subscribe(render);
 // The app opens on Home (or the page named in the address), without rewriting saved data.
 const startScreen = screenFromHash() ?? DEFAULT_SCREEN;

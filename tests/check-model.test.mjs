@@ -123,8 +123,7 @@ test('the estimate range appears only when the answer changes with the estimate,
   });
   const range = buildEstimateRange({ tasks: derived.activeTasks, proposal, days: state.days, options: derived.options });
   assert.ok(range, 'range shown when fit differs between estimates');
-  assert.match(range.sentence, /At 2h or 3h it fits\./);
-  assert.match(range.sentence, /At 5h you're 2 hours short by Thursday 19 Nov\./);
+  assert.equal(range.sentence, '2h fits. 3h fits. 5h is 2h short.');
 
   const calm = check({ research: false, fields: { ...base, likely: 1 } });
   const none = buildEstimateRange({
@@ -211,4 +210,30 @@ test('leaving an example from a blank start returns to a blank week', () => {
   store.dispatch({ type: 'LEAVE_DEMO' });
   assert.equal(store.getState().demo, false);
   assert.equal(store.getState().tasks.length, 0);
+});
+
+import { buildReplyTabs } from '../src/ui/check-model.mjs';
+import { setNowProvider } from '../src/ui/clock.mjs';
+// The fixture week starts Mon 16 Nov. Pin the clock to before it so no part of it counts as elapsed.
+setNowProvider('2026-11-16T07:00:00+05:30');
+
+test('reply tabs exist only for replies the engine verified', () => {
+  const fits = check({ research: false, fields: { title: 'Notes', likely: 1, deadline: '2026-11-20' } });
+  assert.deepEqual(buildReplyTabs({ analysis: fits.analysis, proposal: fits.proposal, days: fits.state.days }).map(t => t.id), ['yes', 'no']);
+
+  const approval = check({ fixed: true, research: false, fields: { title: 'Lab', likely: 4, deadline: '2026-11-19' } });
+  assert.deepEqual(buildReplyTabs({ analysis: approval.analysis, proposal: approval.proposal, days: approval.state.days }).map(t => t.id), ['yesif', 'approval', 'no']);
+
+  const none = check({ research: false, fields: { title: 'Huge', likely: 20, deadline: '2026-11-17' } });
+  assert.deepEqual(buildReplyTabs({ analysis: none.analysis, proposal: none.proposal, days: none.state.days }).map(t => t.id), ['no', 'flex']);
+});
+
+test('the needed-vs-free bar is the engine run: free time for the request, what fits, what is short', () => {
+  const { analysis, after, proposal } = check({ research: false, fields: { title: 'Poster', likely: 4, deadline: '2026-11-19', tag: 'flexible' } });
+  const entry = after.evaluation.typical.deadlineMargins.find(m => m.dayIndex === proposal.targetDay);
+  assert.equal(analysis.bar.need, 4);
+  assert.equal(analysis.bar.free, 3);
+  assert.equal(analysis.bar.short, 1);
+  assert.equal(analysis.bar.short, Math.max(0, -entry.margin / 60));
+  assert.equal(analysis.bigWord, 'Not yet.');
 });

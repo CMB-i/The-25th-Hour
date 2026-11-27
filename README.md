@@ -14,15 +14,17 @@ python3 -m http.server 8000 --bind 127.0.0.1
 
 Open <http://127.0.0.1:8000>. GitHub Pages serves the same root files over HTTPS. Keep `index.html` at the repository root and use relative module and asset paths (`./src/ui/...` and `../engine/...`).
 
-**How the app is organised.** A slim top bar holds the wordmark (Home) and **My week**. Everything else is reached from the page that needs it, and every page has an address (`#/home`, `#/check`, `#/week`, `#/rescue`, `#/feedback`, `#/settings`), so links and the browser back button work.
+**How the app is organised (v3).** The visual spec is `docs/v3-mock/` (fonts replaced by local system stacks; the mock's numbers are illustrative). A slim top bar holds the wordmark (Home) and **My week**. Every page has an address (`#/home`, `#/start`, `#/check`, `#/week`, `#/rescue`, `#/feedback`, `#/settings`).
 
-- **Home** (`render-home.mjs`): one observation about the week and one main action, **Check a request**, with a quiet **View my week**. First use asks you to **Set up my week** or **Try an example**; a blank browser never shows the demo as your week.
-- **Check a request** (`render-check.mjs`, wording and numbers built from engine output in `check-model.mjs`): three fields (task, hours, deadline) with the rest under **More options**. The result is a verdict, one verified option (**If approved** when it needs approval), and the editable reply slip with **Copy reply**. Copying never accepts, approves, applies or sends anything. **See what's booked** shows what the engine counted and links to My week.
-- **My week** (`render-week.mjs`, agenda from `week-model.mjs`): a verdict, a date strip with an agenda (one day on a phone, the whole week on a desktop), **When are you busy?** (fixed blocks, calendar status and import) and **What still needs doing?** (deadline work and bulk import). Schedule details, the example comparison, **Review** and **Settings** sit below it.
-- **Reset** (`render-rescue.mjs`): opens from a deadline at risk with the first conflict and one verified change. Alternatives and the timeline preview are collapsed; approval requests use the same reply slip, then explicit **Mark approved** and **Apply approved change**, with undo.
-- **Review** (`render-feedback.mjs`): the quick completion log first, history below, sleep and stress collapsed.
-- **Settings** (`render-settings.mjs`): sleep, a labelled work-hours editor (bulk text is secondary), preferences, learned estimates, data export, and deletion kept apart.
-- **Examples:** the demo weeks are always labelled. Entering an example stashes your own week (`personalBackup`) and leaving restores it.
+- **Home** (`render-home.mjs`, `home-model.mjs`): a greeting from the clock, one line on the week from the engine ("You have 3 hours of real slack by Tuesday."), a week strip (planned vs room, coral only where over), the form for the next yes (**What is it? / How long might it take? / When is it due? / Who's waiting on an answer?** then **See if it fits**), and **Recent checks** from recorded decisions. A first-run card points to setup when there are no work hours; it never blocks the form.
+- **First run** (`render-start.mjs`): sleep, work hours (day chips plus one range), classes (import `.ics` or add blocks, or later). Each step saves through the existing validation.
+- **See if it fits** (`render-check.mjs`, `check-model.mjs`): the verdict as the largest text ("Not yet." / "That fits."), a needed-vs-free bar from the engine run, one verified option (**If approved** when it needs approval), and the reply slip with tabs that exist only for replies the engine verified. **Copy reply** only copies. *Just me* hides the slip. With no work hours the request is kept and the check asks for them inline. After a wind-down time, "This can wait till morning" appears only when an engine run confirms the work still fits with nothing starting before morning (`night.mjs`).
+- **My week** (`render-week.mjs`, `week-model.mjs`): date strip with one day on a phone and the whole week on a desktop, BUSY vs DEADLINE WORK, free time per day, protected sleep, busy blocks you can name, import, and what still needs doing.
+- **Reset** (`render-rescue.mjs`): numbered verified changes. With a request pending it answers for that request; otherwise for the committed plan. Apply, approval and undo are separate explicit buttons.
+- **What my yeses cost** (`render-feedback.mjs`): the completion log first, one insight once there are three finished tasks of a type, and a guessed-vs-took ledger. Sleep and stress are collapsed.
+- **Settings:** sleep, a day-and-time work-hours editor, preferences, learned estimates, local data, and deletion kept apart.
+- **Night:** `data-theme="night"` follows the sleep window (an hour before sleep until it ends).
+- **No example data in the interface.** Fixtures stay for tests only. A plan an older build saved as the fixture is not shown as your week; it is left untouched on load and archived under `the25thhour.v1.archived-example` before anything overwrites it.
 
 1. **My Week (`src/ui/render-week.mjs`):** Switch between **Flexible target (Scenario A)** and **All deadlines fixed (Scenario B)**, adjust the demo research slider (`4–6h`), or navigate across the 5 loaded weeks. Inspect the live feasibility verdict (`aria-live="polite"`), binding deadline demand vs. available capacity, 3-way comparison cards (*Weekly hours only (simulated baseline)*, *Deadline-aware scheduler (same allocation, no repair step)*, *The 25th Hour*), 30-minute accessible slot timeline, 3-estimate uncertainty table, and calendar freshness status (including the 24-hour stale warning).
 2. **Should I Say Yes? (`src/ui/render-check.mjs`):** Submit one or more draft commitments (name, typical hours, optional min/max with D3 `0.8× / 1.4×` defaults, deadline, priority tag, flexible latest acceptable date with D2 `+1 day` default, earliest start, and task type). Compare before-and-after verdicts (`separate` and `together` when multiple drafts are pending), read the plain-language cost statement and top verified fix, and choose **Accept**, **Accept with suggested change**, **Accept anyway** (which keeps the unresolved conflict visible), or **Not now**.
@@ -53,11 +55,11 @@ the-25th-hour/
 │       ├── app.mjs                # 5-screen router, store subscription & error boundary
 │       ├── dom.mjs                # XSS-safe DOM builder (textContent), formatters & copy helpers
 │       ├── check-model.mjs        # Pure verdict/option/reply/range model built from engine output
-│       ├── render-home.mjs        # Home: one observation, Check a request, first-use setup
+│       ├── render-home.mjs        # Home: one observation and the See if it fits form
 │       ├── week-model.mjs         # Pure agenda and calendar-status model for My week
 │       ├── import-controls.mjs    # Calendar/deadline import and busy-block form (beside My week sections)
 │       ├── reply-slip.mjs         # Copy controls shared by reply slips (copy only, never dispatches)
-│       ├── render-check.mjs       # Check a request: verdict, one option, reply slip
+│       ├── render-check.mjs       # See if it fits: verdict, one option, reply slip
 │       ├── render-feedback.mjs    # Screen 4: Did It Work? (F3 Reality Feedback & 7-day review)
 │       ├── render-rescue.mjs      # Screen 3: Make It Work (F2 Rescue Engine & approval gate)
 │       ├── render-settings.mjs    # Screen 5: Settings, .ics/paste imports, CSV & clear data
@@ -106,7 +108,8 @@ Set `CHROMIUM` to override the browser executable path (on macOS, `/Applications
 - **T21:** Both demo scenarios, dynamic binding-day numbers (no hard-coded Thursday), B6 comparison labels, B7 calendar freshness & 24h stale warning, B9 three empty-repair messages, approval gating & clipboard copy, `aria-live="polite"`, keyboard navigation, `360px` zero horizontal overflow across all 5 screens, and zero console/page errors.
 - **T22:** Full `localStorage` reload persistence across tasks, applied repairs, undo history, settings, feedback, and sleep reports, plus **Clear all my data**.
 - **T23:** Untrusted HTML/JS payloads (`<img src=x onerror=alert(1)>`) in pasted tasks and `.ics` files rendered strictly as inert text, `> 1 MB` `.ics` rejection, inline field validation errors, and zero external network requests.
-- **T25–T26:** the Check-to-reply path (verdict, one option, reply slip, smaller offer, rerun with edited reply, approval copy applies nothing), first-use setup, the work-hours editor, example round-trip, routing, and a squeezed-text check on every page at 360/390/1200px.
+- **T25–T34:** the v3 flows end to end (Home, first run, verdict and reply tabs, My week, Reset, yeses, night, wait-till-morning), plus the earlier check-to-reply paths;
+- **T25–T26 (earlier):** the Check-to-reply path (verdict, one option, reply slip, smaller offer, rerun with edited reply, approval copy applies nothing), first-use setup, the work-hours editor, example round-trip, routing, and a squeezed-text check on every page at 360/390/1200px.
 - **T24:** 35-day / 30-task performance budgets (`evaluate < 100 ms`, `findRepairs < 250 ms`) and responsive UI re-renders.
 
 ## Safety & Guardrails Implemented

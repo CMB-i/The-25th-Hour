@@ -210,3 +210,20 @@ export async function copyToClipboard(text) {
   area.remove();
   return ok;
 }
+
+/** Tints the soft circle behind the page: 'coral' (default), 'sage' for good news, 'tan' for history. */
+export function setBlobTone(tone = 'coral') {
+  if (typeof document === 'undefined') return;
+  const blob = document.getElementById('blob');
+  if (blob) blob.dataset.tone = tone;
+}
+
+/** SVG element builder (SVG needs its own namespace). */
+export function svg(tag, attrs = {}, ...children) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value !== undefined && value !== null && value !== false) node.setAttribute(key, String(value));
+  }
+  for (const child of children.flat()) if (child) node.append(child);
+  return node;
+}

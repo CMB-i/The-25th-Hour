@@ -8,12 +8,15 @@ export function createImportMessage(state) {
     if (errorText) {
       box.replaceChildren(h('p', { className: 'form-error-banner', role: 'alert' }, errorText));
     } else if (report) {
-      box.replaceChildren(
-        h('p', { className: 'import-summary' }, h('strong', {}, report.kind === 'ics' ? 'Calendar import: ' : 'Deadline import: '), report.summary),
-        report.warnings?.length
-          ? h('ul', { className: 'import-warnings-list' }, report.warnings.map(warning => h('li', {}, warning)))
-          : null
-      );
+      // The summary already ends with any warnings, so the list is only for pasted deadlines. Never pass
+      // null to replaceChildren: the DOM turns it into the text "null".
+      const children = [
+        h('p', { className: 'import-summary' }, h('strong', {}, report.kind === 'ics' ? 'Calendar import: ' : 'Deadline import: '), report.summary)
+      ];
+      if (report.warnings?.length && report.kind !== 'ics') {
+        children.push(h('ul', { className: 'import-warnings-list' }, report.warnings.map(warning => h('li', {}, warning))));
+      }
+      box.replaceChildren(...children);
     } else {
       box.replaceChildren();
     }
@@ -22,12 +25,14 @@ export function createImportMessage(state) {
   return { box, show };
 }
 
-export function renderCalendarImport({ state, dispatch, message }) {
-  const input = h('input', {
-    id: 'calendar-file',
+/** The hidden file input behind "Import timetable". Reads locally; nothing is uploaded. */
+export function makeCalendarInput({ dispatch, message, id = 'calendar-file', className = '' }) {
+  return h('input', {
+    id,
     name: 'calendarFile',
     type: 'file',
     accept: '.ics,text/calendar',
+    className,
     onChange: async ev => {
       const file = ev.currentTarget.files?.[0];
       if (!file) return;
@@ -40,9 +45,12 @@ export function renderCalendarImport({ state, dispatch, message }) {
       }
     }
   });
+}
+
+export function renderCalendarImport({ state, dispatch, message }) {
   return h('div', { className: 'form-field' },
     h('label', { for: 'calendar-file' }, state.calendarImportedAt ? 'Import a newer calendar (.ics)' : 'Import a calendar (.ics)'),
-    input,
+    makeCalendarInput({ dispatch, message }),
     h('small', { className: 'field-hint' }, 'Read in this browser only, up to 1 MB. Nothing is uploaded.')
   );
 }

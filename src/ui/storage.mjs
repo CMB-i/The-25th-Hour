@@ -1,6 +1,8 @@
 export const STORAGE_KEY = 'the25thhour.v1';
 export const SCHEMA_VERSION = 1;
-export const VALID_SCREENS = Object.freeze(['home', 'week', 'check', 'rescue', 'feedback', 'settings']);
+// A plan saved by an older build as the fixture (demo: true) is archived here, never deleted.
+export const ARCHIVE_KEY = `${STORAGE_KEY}.archived-example`;
+export const VALID_SCREENS = Object.freeze(['home', 'start', 'week', 'check', 'cost', 'rescue', 'feedback', 'settings']);
 
 const isPlainObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -56,6 +58,8 @@ export function migrate(value) {
     unresolvedConflict: Boolean(value.unresolvedConflict),
     draftIncludeWorkload: Boolean(value.draftIncludeWorkload),
     displayName: typeof value.displayName === 'string' ? value.displayName.slice(0, 40) : '',
+    decisions: Array.isArray(value.decisions) ? value.decisions.slice(-30) : [],
+    busyLabels: isPlainObject(value.busyLabels) ? value.busyLabels : {},
     personalBackup: isPlainObject(value.personalBackup) && Array.isArray(value.personalBackup.days) ? value.personalBackup : null,
     skippedSleepPromptDate: typeof value.skippedSleepPromptDate === 'string' ? value.skippedSleepPromptDate : null,
     notice: ''

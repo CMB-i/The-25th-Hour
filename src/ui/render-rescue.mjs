@@ -1,11 +1,11 @@
 import { deadlineCost } from '../engine/evaluate.mjs';
 import { draftApprovalRequest, emptyRepairMessage } from '../engine/repairs.mjs';
 import { weekView } from '../engine/weeks.mjs';
-import { conflictClause, dayLabel, hoursPhrase } from './check-model.mjs';
-import { fmtTimestamp, h, verdictLabel } from './dom.mjs';
+import { conflictClause, dayLabel, hoursPhrase, isRepairForRequest } from './check-model.mjs';
+import { fmtTimestamp, h, setBlobTone, svg, verdictLabel } from './dom.mjs';
 import { makeCopyControls } from './reply-slip.mjs';
 import { renderTimeline } from './render-timeline.mjs';
-import { getApprovalRecord } from './state.mjs';
+import { findSelfServeAcceptRepair, getApprovalRecord } from './state.mjs';
 
 // Edited approval drafts, keyed by repair id. UI-only; never sent, never persisted.
 const draftEdits = new Map();
@@ -110,28 +110,107 @@ function renderApproval(selected, state, derived, dispatch) {
   );
 }
 
+function backHome(dispatch) {
+  return h('button', {
+    type: 'button', id: 'reset-back', className: 'back-link',
+    onClick: () => dispatch({ type: 'NAVIGATE', screen: 'home' })
+  },
+    svg('svg', { width: '18', height: '18', viewBox: '0 0 18 18', fill: 'none', 'aria-hidden': 'true' },
+      svg('path', { d: 'M11 3L5 9l6 6', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })),
+    'Home');
+}
+
+/** A numbered step card, as in the Reset mock. */
+function stepCard({ number, title, tag, body, actions, selected = false, className = '' }) {
+  return h('div', { className: `step-card${selected ? ' is-first' : ''} ${className}`.trim() },
+    h('span', { className: 'step-num', 'aria-hidden': 'true' }, String(number)),
+    h('div', { className: 'step-body' },
+      h('h2', { className: 'step-title' }, title),
+      tag,
+      h('p', { className: 'step-text' }, body),
+      actions));
+}
+
+/**
+ * Reset for a request that is still being decided: the verified ways to make room for *it*, from the
+ * same engine run the check used. Adding it with a self-serve change is the existing explicit action.
+ */
+function renderRequestReset({ state, derived, dispatch, proposal, after }) {
+  const repairs = after.repairs.filter(repair => isRepairForRequest(repair, proposal.id)).slice(0, 5);
+  const selfServe = findSelfServeAcceptRepair(after.repairs, [proposal.id]);
+  const clause = after.evaluation.typical.feasible ? null : conflictClause(after.evaluation.typical, state.days);
+  const lead = h('section', { id: 'reset-lead', className: 'reset-lead' },
+    h('div', { className: 'eyebrow' }, "LET'S RESET"),
+    h('h1', { className: 'reset-title' }, `Making room for ${proposal.title}.`),
+    h('p', { id: 'reset-status', className: 'status-pill status-pill-short' }, verdictLabel(after.evaluation.verdict)),
+    h('p', { className: 'reset-lead-text' }, clause ? `With it, you'd be ${clause.text}.` : 'It fits, but with little room.'),
+    repairs.length
+      ? h('h2', { className: 'section-title reset-list-title' }, "Here's where we can start.")
+      : h('p', { className: 'reset-lead-text' }, emptyRepairMessage('infeasible'))
+  );
+  repairs.forEach((repair, index) => {
+    lead.append(stepCardFor({
+      number: index + 1,
+      first: index === 0,
+      repair,
+      state,
+      actions: !repair.needsApproval && repair.id === selfServe?.id
+        ? h('div', { className: 'section-actions' },
+            h('button', {
+              type: 'button', id: index === 0 ? 'apply-lead' : undefined, className: 'button button-primary',
+              onClick: () => dispatch({ type: 'ACCEPT_PROPOSAL', proposalIds: [proposal.id], mode: 'accept-repair', repairId: repair.id })
+            }, 'Add it to my week, with this change'))
+        : repair.needsApproval
+          ? h('button', {
+              type: 'button', className: 'link-button',
+              onClick: () => dispatch({ type: 'NAVIGATE', screen: 'check' })
+            }, 'Back to your reply')
+          : null
+    }));
+  });
+  return [lead, h('div', { className: 'reset-foot' },
+    h('button', { type: 'button', id: 'reset-back-check', className: 'link-button', onClick: () => dispatch({ type: 'NAVIGATE', screen: 'check' }) }, 'Back to your request'))];
+}
+
+function stepCardFor({ number, first, repair, state, actions }) {
+  return stepCard({
+    number,
+    selected: first,
+    title: `${repairLabel(repair)}.`,
+    tag: h('span', { className: `option-tag ${repair.needsApproval ? 'needs-approval' : 'self-serve'}` },
+      repair.needsApproval ? 'If approved' : 'You can do this yourself'),
+    body: `${effectText(repair, state)} Checked against every deadline with sleep protected.`,
+    actions
+  });
+}
+
 /**
  * Renders Reset: the first conflict, one verified change and what to do next.
  */
 export function renderRescueScreen(container, { state, derived, dispatch }) {
   const { evaluation, repairs } = derived;
-  const parts = [];
-  parts.push(
-    h('header', { className: 'screen-intro' },
-      h('h1', { className: 'screen-title' }, 'Reset'),
-      h('p', { className: 'screen-lede' }, 'Get an overfilled week back under control.')
-    )
-  );
-
+  const parts = [backHome(dispatch)];
+  const pending = state.proposals[0];
+  const pendingAfter = pending && derived.commitmentCheck ? derived.commitmentCheck.separate[0] : null;
+  if (pendingAfter && pendingAfter.evaluation.verdict !== 'feasible') {
+    setBlobTone('coral');
+    parts.push(...renderRequestReset({ state, derived, dispatch, proposal: pending, after: pendingAfter }));
+    container.replaceChildren(...parts);
+    return;
+  }
   const history = renderHistory(state, dispatch);
+  const tagFor = repair => h('span', { className: `option-tag ${repair.needsApproval ? 'needs-approval' : 'self-serve'}` },
+    repair.needsApproval ? 'If approved' : 'You can do this yourself');
 
   if (evaluation.verdict === 'feasible') {
+    setBlobTone('sage');
     parts.push(
-      h('section', { id: 'reset-lead', className: 'verdict-block verdict-fits' },
-        h('p', { id: 'reset-status', className: 'verdict-word verdict-word-fits' }, 'Fits'),
-        h('h2', { className: 'verdict-headline' }, 'Nothing needs to move.'),
-        h('p', { className: 'verdict-detail' },
-          `${emptyRepairMessage('feasible')}. Every deadline is met with at least an hour to spare, even if things run long.`),
+      h('section', { id: 'reset-lead', className: 'reset-lead' },
+        h('div', { className: 'eyebrow' }, "LET'S RESET"),
+        h('h1', { className: 'reset-title' }, "That's better."),
+        h('p', { id: 'reset-status', className: 'status-pill status-pill-fits' }, 'Fits'),
+        h('p', { className: 'reset-lead-text' },
+          `Nothing needs to move. ${emptyRepairMessage('feasible')}. Every deadline is met with at least an hour to spare, even if things run long, and your sleep is protected.`),
         h('button', {
           type: 'button', className: 'link-button',
           onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
@@ -149,23 +228,26 @@ export function renderRescueScreen(container, { state, derived, dispatch }) {
     ? `The first deadline at risk is ${dayLabel(clause.date)}. You're ${clause.text}.`
     : `The first deadline to watch is ${dayLabel(cost.date)}, with ${hoursPhrase(Math.max(0, cost.marginHours))} to spare.`;
   const tone = clause ? 'short' : 'tight';
+  setBlobTone('coral');
 
   const visible = repairs.slice(0, 5);
   const selected = visible.find(item => item.id === state.selectedRepairId) ?? visible[0] ?? null;
 
-  const lead = h('section', { id: 'reset-lead', className: `verdict-block verdict-${tone}` },
-    h('p', { id: 'reset-status', className: `verdict-word verdict-word-${tone}` }, verdictLabel(evaluation.verdict)),
-    h('h2', { className: 'verdict-headline reset-headline' }, first)
+  const lead = h('section', { id: 'reset-lead', className: 'reset-lead' },
+    h('div', { className: 'eyebrow' }, "LET'S RESET"),
+    h('h1', { className: 'reset-title' }, clause ? "It's a lot right now." : "It's tight right now."),
+    h('p', { id: 'reset-status', className: `status-pill status-pill-${tone}` }, verdictLabel(evaluation.verdict)),
+    h('p', { className: 'reset-lead-text' }, first)
   );
 
   if (!selected) {
     lead.append(
-      h('p', { className: 'verdict-detail' }, emptyRepairMessage(evaluation.verdict)),
-      h('p', { className: 'verdict-note' },
+      h('p', { className: 'reset-lead-text' }, emptyRepairMessage(evaluation.verdict)),
+      h('p', { className: 'option-note' },
         'Check what the app is counting: a missing busy block or wrong work hours can change this.'),
       h('div', { className: 'section-actions' },
         h('button', {
-          type: 'button', id: 'reset-to-week', className: 'button button-secondary',
+          type: 'button', id: 'reset-to-week', className: 'button button-primary',
           onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
         }, 'Check what is counted'),
         h('button', {
@@ -181,24 +263,22 @@ export function renderRescueScreen(container, { state, derived, dispatch }) {
   }
 
   lead.append(
-    h('div', { className: 'lead-change' },
-      h('p', { className: 'eyebrow' }, 'One verified change'),
-      h('h3', {}, repairLabel(selected)),
-      h('span', { className: `option-tag ${selected.needsApproval ? 'needs-approval' : 'self-serve'}` },
-        selected.needsApproval ? 'If approved' : 'You can do this yourself'),
-      h('p', { className: 'option-result' }, effectText(selected, state)),
-      h('p', { className: 'option-note' }, 'Checked against every deadline with sleep protected.')
-    )
+    h('h2', { className: 'section-title reset-list-title' }, "Here's where we can start."),
+    stepCard({
+      number: 1,
+      selected: true,
+      title: `${repairLabel(selected)}.`,
+      tag: tagFor(selected),
+      body: `${effectText(selected, state)} Checked against every deadline with sleep protected.`,
+      actions: !selected.needsApproval
+        ? h('div', { className: 'section-actions' },
+            h('button', {
+              type: 'button', id: 'apply-lead', className: 'button button-primary',
+              onClick: () => dispatch({ type: 'APPLY_REPAIR', repairId: selected.id })
+            }, 'Apply this change'))
+        : null
+    })
   );
-  if (!selected.needsApproval) {
-    lead.append(
-      h('div', { className: 'section-actions' },
-        h('button', {
-          type: 'button', id: 'apply-lead', className: 'button button-primary',
-          onClick: () => dispatch({ type: 'APPLY_REPAIR', repairId: selected.id })
-        }, 'Apply this change'))
-    );
-  }
   parts.push(lead);
   if (selected.needsApproval) parts.push(renderApproval(selected, state, derived, dispatch));
 
@@ -208,18 +288,18 @@ export function renderRescueScreen(container, { state, derived, dispatch }) {
       h('details', { className: 'quiet-details', id: 'reset-alternatives' },
         h('summary', {}, `Other options (${others.length})`),
         h('ul', { className: 'alt-list' },
-          others.map(repair =>
+          others.map((repair, index) =>
             h('li', { className: 'repair-card' },
-              h('div', {},
-                h('strong', {}, repairLabel(repair)),
-                ' ',
-                h('span', { className: `option-tag ${repair.needsApproval ? 'needs-approval' : 'self-serve'}` },
-                  repair.needsApproval ? 'If approved' : 'You can do this yourself'),
-                h('p', { className: 'option-note' }, effectText(repair, state))),
-              h('button', {
-                type: 'button', className: 'link-button',
-                onClick: () => dispatch({ type: 'SELECT_REPAIR', repairId: repair.id })
-              }, 'Use this instead'))))
+              stepCard({
+                number: index + 2,
+                title: `${repairLabel(repair)}.`,
+                tag: tagFor(repair),
+                body: effectText(repair, state),
+                actions: h('button', {
+                  type: 'button', className: 'link-button',
+                  onClick: () => dispatch({ type: 'SELECT_REPAIR', repairId: repair.id })
+                }, 'Use this instead')
+              }))))
       )
     );
   }
@@ -241,5 +321,13 @@ export function renderRescueScreen(container, { state, derived, dispatch }) {
     )
   );
   if (history) parts.push(history);
+  parts.push(
+    h('div', { className: 'reset-foot' },
+      h('p', { className: 'voice-line' }, "We'll take it step by step."),
+      h('button', {
+        type: 'button', id: 'reset-later', className: 'link-button',
+        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'home' })
+      }, "I'll come back to this"))
+  );
   container.replaceChildren(...parts);
 }

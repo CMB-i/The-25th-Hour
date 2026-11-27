@@ -1,4 +1,4 @@
-// Pure presentation model for the "Check a request" flow.
+// Pure presentation model for the "See if it fits" flow.
 // Every number, date and "fits" claim below is read from engine output
 // (evaluate / evaluateCommitments / findRepairs / draftApprovalRequest).
 // Nothing in this file touches the DOM, storage or the clipboard.
@@ -6,6 +6,8 @@ import { weekdayName } from '../engine/dates.mjs';
 import { deadlineCost, evaluate } from '../engine/evaluate.mjs';
 import { draftApprovalRequest, emptyRepairMessage } from '../engine/repairs.mjs';
 import { fmtShortDate } from './dom.mjs';
+import { dayFreeTime } from './week-model.mjs';
+import { planNumbers } from './numbers.mjs';
 
 export function hoursPhrase(hours) {
   const rounded = Math.round(hours * 10) / 10;
@@ -44,6 +46,11 @@ export function conflictClause(schedule, days) {
     };
   }
   return null;
+}
+
+/** A meeting is something you attend, not something you hand in. */
+export function isMeeting(proposal) {
+  return /\b(meeting|meet|catch-?up|call|sync|appointment|interview)\b/i.test(String(proposal?.title ?? ''));
 }
 
 export const isRepairForRequest = (repair, proposalId) =>
@@ -89,17 +96,12 @@ export function buildEstimateRange({ tasks, proposal, days, options }) {
   });
   if (rows.every(row => row.fits === rows[0].fits)) return null;
 
-  // Fitting estimates can share a sentence; every non-fitting estimate has its
-  // own shortfall, so each one is reported on its own.
-  const fitting = rows.filter(row => row.fits).map(row => `${row.hours}h`);
-  const parts = [];
-  if (fitting.length) parts.push(`At ${fitting.join(' or ')} it fits.`);
-  for (const row of rows.filter(item => !item.fits)) {
-    parts.push(row.clause
-      ? `At ${row.hours}h ${row.clause.kind === 'hours' ? `you're ${row.clause.text}` : `you'd be ${row.clause.text}`}.`
-      : `At ${row.hours}h it doesn't fit.`);
-  }
-  const sentence = parts.join(' ');
+  // One computed line: "1.5h fits. 2h is 0.5h short. 3h is 1.5h short." Each number is that estimate's own engine run.
+  const shortText = row => {
+    const hoursShort = row.clause ? Math.round(row.clause.hours * 10) / 10 : null;
+    return hoursShort ? `${row.hours}h is ${hoursShort}h short.` : `${row.hours}h doesn't fit.`;
+  };
+  const sentence = rows.map(row => (row.fits ? `${row.hours}h fits.` : shortText(row))).join(' ');
   return { rows, sentence };
 }
 
@@ -108,7 +110,7 @@ export function buildEstimateRange({ tasks, proposal, days, options }) {
  * `before` / `after` are the outcomes returned by evaluateCommitments.
  */
 export function analyzeRequest({ state, derived, proposal, before, after, smaller = null }) {
-  const days = state.days;
+  const days = derived?.planDays ?? state.days;
   const beforeEval = before.evaluation;
   const afterEval = after.evaluation;
   const fits = afterEval.typical.feasible;
@@ -166,6 +168,12 @@ export function analyzeRequest({ state, derived, proposal, before, after, smalle
   const alternative = option && option.needsApproval && selfServeRepair
     ? describeRepair(selfServeRepair, days, proposal)
     : null;
+  const touchesRequestDate = repair => repair.actions.some(action =>
+    action.taskId === proposal.id && (action.type === 'move' || action.type === 'extend'));
+  const moveRepair = keepsRequest.find(repair => touchesRequestDate(repair)) ?? null;
+  const yesIfRepair = keepsRequest.find(repair => !touchesRequestDate(repair)) ?? null;
+  const moveOption = !fits && moveRepair ? describeRepair(moveRepair, days, proposal) : null;
+  const yesIfOption = !fits && yesIfRepair ? describeRepair(yesIfRepair, days, proposal) : null;
   const noOptionText = !fits
     ? (onlyDeclines
         ? 'The only verified change is to say no to this request. Nothing you could move or shrink on your own makes it fit.'
@@ -191,6 +199,38 @@ export function analyzeRequest({ state, derived, proposal, before, after, smalle
     replyKind
   ]);
 
+  // ---- v3 verdict presentation (all numbers from the engine run) --------
+  const spare = afterCost ? Math.max(0, afterCost.marginHours) : 0;
+  // Due today with no work time left today: say so plainly instead of a shortfall in hours.
+  const targetDate = days[proposal.targetDay]?.date;
+  const targetDay = days[proposal.targetDay];
+  const nothingLeftToday = !fits && targetDay?.elapsed === 'partial' &&
+    dayFreeTime({ day: targetDay, sleep: state.sleep, assigned: [] }).openMinutes === 0;
+  const bigWord = nothingLeftToday ? 'Nothing left today.' : kind === 'short' ? 'Not yet.' : kind === 'tight' ? 'Close call.' : 'That fits.';
+  const eyebrow = kind === 'short' ? 'THE HONEST ANSWER' : kind === 'tight' ? 'CLOSE CALL' : 'GOOD NEWS';
+  const lead = nothingLeftToday
+    ? `There is no work time left today (${dayLabel(targetDate)}), so this can't be done by tonight.`
+    : kind === 'fits' && afterCost
+    ? `You'd have ${hoursPhrase(spare)} to spare by ${dayLabel(afterCost.date)}, with sleep untouched. Say yes with a clear conscience.`
+    : headline;
+  const dueEntry = afterEval.typical.deadlineMargins?.find(entry => entry.dayIndex === proposal.targetDay);
+  let bar = null;
+  if (dueEntry) {
+    const need = proposal.likely;
+    const available = dueEntry.capacity / 60;
+    const required = dueEntry.demand / 60;
+    const free = Math.max(0, available - (required - need));
+    bar = {
+      // The window starts now when part of the loaded weeks has already gone by.
+      fromNow: days.some(day => day.elapsed),
+      dayName: weekdayName(days[proposal.targetDay].date),
+      need,
+      free,
+      ok: Math.min(need, free),
+      short: Math.max(0, need - free)
+    };
+  }
+
   const range = buildEstimateRange({
     tasks: derived.activeTasks,
     proposal,
@@ -202,6 +242,8 @@ export function analyzeRequest({ state, derived, proposal, before, after, smalle
     kind,
     fits,
     tight,
+    numbers: planNumbers(afterEval.typical, days),
+    nothingLeftToday,
     headline,
     detail,
     baselineBroken,
@@ -217,7 +259,13 @@ export function analyzeRequest({ state, derived, proposal, before, after, smalle
     signature,
     range,
     topRepair,
-    selfServeRepair
+    selfServeRepair,
+    moveOption,
+    yesIfOption,
+    bigWord,
+    eyebrow,
+    lead,
+    bar
   };
 }
 
@@ -228,6 +276,7 @@ export function analyzeRequest({ state, derived, proposal, before, after, smalle
  */
 export function buildReply({ analysis, proposal, days, variant = 'decline', smaller = null, includeWorkload = false }) {
   const title = proposal.title;
+  const meeting = isMeeting(proposal);
   const when = analysis.requestDate ? dayLabel(analysis.requestDate) : 'the deadline';
   const kind = analysis.replyKind;
 
@@ -255,7 +304,9 @@ export function buildReply({ analysis, proposal, days, variant = 'decline', smal
     return {
       kind,
       label: 'A yes',
-      text: `Hi,\n\nYes, I can take on ${title}. I'll have it done by ${when}.\n\nThanks for thinking of me.`,
+      text: meeting
+        ? `Hi,\n\nYes, I can make the meeting on ${when}.\n\nThanks for thinking of me.`
+        : `Hi,\n\nYes, I can take on ${title}. I'll have it done by ${when}.\n\nThanks for thinking of me.`,
       note: ''
     };
   }
@@ -265,8 +316,21 @@ export function buildReply({ analysis, proposal, days, variant = 'decline', smal
     return {
       kind,
       label: 'A yes, on a later date',
-      text: `Hi,\n\nI can't get ${title} done by ${when}, but I can have it to you by ${dayLabel(newDate)}. Would that work?\n\nThanks for thinking of me.`,
+      text: meeting
+        ? `Hi,\n\nI can't make the meeting on ${when}, but I could do ${dayLabel(newDate)}. Would that work?\n\nThanks for thinking of me.`
+        : `Hi,\n\nI can't get ${title} done by ${when}, but I can have it to you by ${dayLabel(newDate)}. Would that work?\n\nThanks for thinking of me.`,
       note: 'The engine checked that later date against your week.'
+    };
+  }
+
+  if (kind === 'conditional-approval') {
+    return {
+      kind,
+      label: 'A conditional yes',
+      text: meeting
+        ? `Hi,\n\nI'd like to make the meeting on ${when}. I need to sort one thing on my side first, so I'll confirm shortly.\n\nThanks for thinking of me.`
+        : `Hi,\n\nI'd love to help with ${title}. I can have it to you by ${when} once I've sorted one thing on my side, so I'll confirm shortly.\n\nThanks for thinking of me.`,
+      note: 'The change needs someone else to agree first. Nothing in your week changes until they do.'
     };
   }
 
@@ -274,23 +338,29 @@ export function buildReply({ analysis, proposal, days, variant = 'decline', smal
     return {
       kind,
       label: 'A conditional yes',
-      text: `Hi,\n\nYes, I can take on ${title} and have it done by ${when}. I need to rearrange a few other things on my side first, so I'll confirm once that's sorted.\n\nThanks for thinking of me.`,
+      text: meeting
+        ? `Hi,\n\nYes, I can make the meeting on ${when}. I need to rearrange a few other things on my side first, so I'll confirm once that's sorted.\n\nThanks for thinking of me.`
+        : `Hi,\n\nYes, I can take on ${title} and have it done by ${when}. I need to rearrange a few other things on my side first, so I'll confirm once that's sorted.\n\nThanks for thinking of me.`,
       note: 'The change you would make is the option above. Apply it only if you want this one.'
     };
   }
 
-  if (variant === 'flex') {
+  if (variant === 'flex' || kind === 'flex') {
     return {
       kind: 'flex',
       label: 'A request for flexibility',
-      text: `Hi,\n\nThanks for asking about ${title}. I'd like to help, but I can't commit to ${when} as things stand. If the deadline or the size of the job has some give, tell me what's flexible and I'll let you know what I can do.\n\nThanks.`,
+      text: meeting
+        ? `Hi,\n\nThanks for asking about the meeting. I'd like to be there, but I can't commit to ${when} as things stand. If the time has some give, tell me what's flexible and I'll let you know what I can do.\n\nThanks.`
+        : `Hi,\n\nThanks for asking about ${title}. I'd like to help, but I can't commit to ${when} as things stand. If the deadline or the size of the job has some give, tell me what's flexible and I'll let you know what I can do.\n\nThanks.`,
       note: "This doesn't promise a date."
     };
   }
   return {
     kind: 'decline',
     label: 'A kind no',
-    text: `Hi,\n\nThanks for thinking of me for ${title}. I can't take it on by ${when}, and I'd rather tell you now than say yes and let you down.\n\nThanks again for asking.`,
+    text: meeting
+      ? `Hi,\n\nThanks for thinking of me. I can't make the meeting on ${when}, and I'd rather tell you now than say yes and let you down.\n\nThanks again for asking.`
+      : `Hi,\n\nThanks for thinking of me for ${title}. I can't take it on by ${when}, and I'd rather tell you now than say yes and let you down.\n\nThanks again for asking.`,
     note: ''
   };
 }
@@ -327,11 +397,51 @@ export function describeBookedWeek({ state, derived, throughDayIndex, schedule }
     }));
   const evidence = [];
   if (!state.calendarImportedAt) {
-    evidence.push("No calendar has been imported, so the fixed blocks below are only ones that were typed in or came with the example week.");
+    evidence.push("No calendar has been imported, so the fixed blocks below are only the ones you've added.");
   }
   const totalAvailable = rows.reduce((sum, row) => sum + row.availableHours, 0);
   if (totalAvailable === 0) {
     evidence.push('There are no free work hours before this deadline once busy blocks and protected sleep are removed.');
   }
   return { rows, deadlines, evidence, throughDayIndex: last };
+}
+
+
+const TAB_HINTS = {
+  yes: 'A plain yes. It fits, so you can say it without crossing your fingers.',
+  yesif: 'A conditional yes, built on the one change the app checked.',
+  more: 'A later date the app verified against everything you already promised.',
+  approval: "A request to the person who'd need to agree, drafted from the change the app checked.",
+  smaller: 'A smaller yes. The app checked it against your week.',
+  no: 'A kind no, with a door left open. No guilt in it.',
+  flex: 'A way to ask for room without promising a date.'
+};
+
+/**
+ * The replies worth offering, one tab each. A tab only exists when the engine verified what it says:
+ * "Yes" only when it fits, "Yes, if" and "Ask for approval" only for a verified change, "More time" only
+ * for a later date the engine checked, "Smaller yes" only for a smaller version that fits.
+ */
+export function buildReplyTabs({ analysis, proposal, days, smaller = null, includeWorkload = false }) {
+  const make = (id, label, kind, extra = {}) => {
+    const reply = buildReply({ analysis: { ...analysis, replyKind: kind, ...extra }, proposal, days, smaller, includeWorkload });
+    return { id, label, hint: TAB_HINTS[id], text: reply.text, note: reply.note };
+  };
+  const tabs = [];
+  if (analysis.fits) {
+    if (smaller?.active) tabs.push(make('smaller', 'Smaller yes', 'smaller-yes'));
+    else tabs.push(make('yes', 'Yes', 'yes'));
+    tabs.push(make('no', 'Kind no', 'decline'));
+    return tabs;
+  }
+  const yesIf = analysis.yesIfOption;
+  if (yesIf && !yesIf.needsApproval) tabs.push(make('yesif', 'Yes, if', 'conditional', { option: yesIf }));
+  if (yesIf && yesIf.needsApproval) {
+    tabs.push(make('yesif', 'Yes, if', 'conditional-approval', { option: yesIf }));
+  }
+  if (analysis.moveOption) tabs.push(make('more', 'More time', 'conditional-date', { option: analysis.moveOption }));
+  if (yesIf && yesIf.needsApproval) tabs.push(make('approval', 'Ask for approval', 'approval', { option: yesIf }));
+  tabs.push(make('no', 'Kind no', 'decline'));
+  if (!yesIf && !analysis.moveOption) tabs.push(make('flex', 'Ask for flexibility', 'flex'));
+  return tabs;
 }

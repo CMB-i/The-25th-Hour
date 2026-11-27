@@ -10,10 +10,14 @@ import {
   updateEstimateProfile
 } from '../engine/feedback.mjs';
 import { parseIcs, parsePastedTasks } from '../engine/importers.mjs';
+import { extractBusyLabels } from './ics-labels.mjs';
+import { getNow } from './clock.mjs';
+import { campusClock, effectiveDays } from './elapsed.mjs';
+import { hoursShort, planNumbers } from './numbers.mjs';
 import { applyRepair, findRepairs } from '../engine/repairs.mjs';
 import { isHalfHour } from '../engine/scheduler.mjs';
 import { LOADED_WEEKS, rebasePlan, rollingDays, weekView } from '../engine/weeks.mjs';
-import { SCHEMA_VERSION, VALID_SCREENS, clearState, loadState, saveState } from './storage.mjs';
+import { ARCHIVE_KEY, SCHEMA_VERSION, STORAGE_KEY, VALID_SCREENS, clearState, loadState, saveState } from './storage.mjs';
 
 export const MAX_ICS_BYTES = 1_000_000;
 export const WEEKDAY_LABELS = Object.freeze(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
@@ -37,6 +41,8 @@ const STATEFUL_ACTIONS = new Set([
   'SET_APPROVAL_STATUS',
   'APPLY_REPAIR',
   'UNDO_LAST_REPAIR',
+  'REMOVE_TASK',
+  'UNDO_ADDED',
   'SAVE_SETTINGS',
   'IMPORT_PASTED_TASKS',
   'IMPORT_ICS',
@@ -91,6 +97,8 @@ export function makeInitialState({ fixed = false, demo = true, nowIso } = {}) {
     unresolvedConflict: false,
     draftIncludeWorkload: false,
     displayName: '',
+    decisions: [],
+    busyLabels: {},
     personalBackup: null,
     skippedSleepPromptDate: null,
     lastImportReport: null,
@@ -105,6 +113,11 @@ export function isSetUp(state) {
   if (state.demo) return false;
   const hasWork = (state.settings?.weeklyWorkWindows ?? []).some(day => (day ?? []).length > 0);
   return Boolean(state.setupComplete || state.tasks.length || state.calendarImportedAt || hasWork);
+}
+
+/** A record of what the student decided, for the Recent checks list on Home. */
+function decisionRecord(task, status, at) {
+  return { title: task.title, hours: task.likely, audience: task.audience === 'self' ? 'self' : 'others', status, at };
 }
 
 function personalSnapshot(state) {
@@ -215,14 +228,18 @@ export function findSelfServeAcceptRepair(repairs, draftIds) {
   ) ?? null;
 }
 
+/** The loaded days with elapsed time made unavailable, for the engine only. Never stored. (The built-in example week is exempt: it is not the student's real calendar.) */
+export const planDays = (state, now = getNow()) => (state.demo ? state.days : effectiveDays(state.days, now));
+
 /**
  * Computes all engine-derived schedule, verdict, margin, repair, and commitment check data.
  */
-export function deriveView(state) {
+export function deriveView(state, now = getNow()) {
   const activeTasks = getActiveTasks(state);
   const options = { sleep: state.sleep };
-  const evaluation = evaluate(activeTasks, state.days, options);
-  const repairs = findRepairs(activeTasks, state.days, options);
+  const days = planDays(state, now);
+  const evaluation = evaluate(activeTasks, days, options);
+  const repairs = findRepairs(activeTasks, days, options);
   const maxWeekIndex = Math.max(0, Math.ceil(state.days.length / 7) - 1);
   const safeWeekIndex = Math.min(Math.max(0, state.weekIndex), maxWeekIndex);
   const week = weekView(state.days, safeWeekIndex);
@@ -232,7 +249,7 @@ export function deriveView(state) {
   const fingerprint = computePlanFingerprint(state);
   const estimateProfiles = buildEstimateProfiles(state.feedback.tasks);
   const commitmentCheck = state.proposals.length > 0
-    ? evaluateCommitments(activeTasks, state.proposals, state.days, options)
+    ? evaluateCommitments(activeTasks, state.proposals, days, options)
     : null;
   const feedbackDates = [
     ...state.feedback.tasks.map(entry => campusDate(entry.recordedAt)).filter(Boolean),
@@ -257,6 +274,9 @@ export function deriveView(state) {
   return {
     activeTasks,
     options,
+    now,
+    planDays: days,
+    numbers: planNumbers(evaluation.typical, days),
     evaluation,
     repairs,
     weekIndex: safeWeekIndex,
@@ -299,6 +319,90 @@ function restorePreviousTasks(currentTasks, change) {
  * Pure state reducer driving every user and system transition from a single state object.
  */
 export function reduceState(state, action, nowFn = () => new Date().toISOString()) {
+  const result = reduceCore(state, action, nowFn);
+  // After a save or a "never mind" the app lands where the caller says (My week, Home), never on the blank form.
+  const next = action?.thenScreen && VALID_SCREENS.includes(action.thenScreen) && result !== state
+    ? { ...result, screen: action.thenScreen }
+    : result;
+  if (action?.type === 'ACCEPT_PROPOSAL' && next !== state) {
+    // What the banner's Undo takes back: the tasks just added, and the repair applied with them (if any).
+    const ids = new Set(state.proposals.filter(item => (action.proposalIds ?? [action.proposalId]).includes(item.id)).map(item => item.id));
+    const last = next.appliedChanges[next.appliedChanges.length - 1];
+    return {
+      ...next,
+      undoAdd: {
+        taskIds: [...ids],
+        changeId: next.appliedChanges.length > state.appliedChanges.length ? last?.id ?? null : null,
+        notice: next.notice
+      }
+    };
+  }
+  if (next !== state && next.undoAdd && next.notice !== next.undoAdd.notice) {
+    const { undoAdd, ...rest } = next;
+    return rest;
+  }
+  return next;
+}
+
+/** Removes tasks by id (REMOVE_TASK), or takes back what the last "Add it to my week" added (UNDO_ADDED). */
+function removeTasks(state, action, nowFn) {
+  let current = state;
+  let ids;
+  if (action.type === 'UNDO_ADDED') {
+    const undo = state.undoAdd;
+    if (!undo?.taskIds?.length) throw Error('Nothing to undo.');
+    ids = undo.taskIds;
+    const last = state.appliedChanges[state.appliedChanges.length - 1];
+    if (undo.changeId && last?.id === undo.changeId) current = reduceCore(current, { type: 'UNDO_LAST_REPAIR' }, nowFn);
+  } else {
+    ids = [String(action.taskId ?? '')];
+  }
+  const gone = new Set(ids);
+  const removed = current.tasks.filter(task => gone.has(task.id));
+  if (!removed.length) throw Error('That task is not in your week any more.');
+  const titles = removed.map(task => task.title);
+  const decisions = [...(current.decisions ?? [])];
+  for (const title of titles) {
+    const at = decisions.map(item => item.title === title && item.status === 'yes').lastIndexOf(true);
+    if (at >= 0) decisions.splice(at, 1);
+  }
+  const strip = list => (Array.isArray(list) ? list.filter(task => !gone.has(task.id)) : list);
+  const next = {
+    ...current,
+    tasks: current.tasks.filter(task => !gone.has(task.id)),
+    decisions,
+    appliedChanges: current.appliedChanges.map(change => ({
+      ...change,
+      previous: strip(change.previous),
+      ...(Array.isArray(change.previousTasks) ? { previousTasks: strip(change.previousTasks) } : {})
+    })),
+    pendingApprovals: [],
+    selectedRepairId: null,
+    lastEditedAt: nowFn()
+  };
+  delete next.undoAdd;
+  const evaluation = evaluate(getActiveTasks(next), planDays(next), { sleep: next.sleep });
+  const label = VERDICT_NAMES[evaluation.verdict] ?? evaluation.verdict;
+  return {
+    ...next,
+    unresolvedConflict: evaluation.typical.feasible ? false : next.unresolvedConflict,
+    notice: `Removed ${titles.map(title => `"${title}"`).join(', ')} from your week. Your plan ${label === 'fits' ? 'fits' : `now ${label}`}.`
+  };
+}
+
+/** A deadline before today is said plainly, not run as a verdict. */
+function pastAware(run) {
+  try {
+    return run();
+  } catch (error) {
+    if (/already passed/i.test(error?.message ?? '')) {
+      throw Error('Deadline has already passed. That was due in the past, so there is nothing to check. Pick today or a later day.');
+    }
+    throw error;
+  }
+}
+
+function reduceCore(state, action, nowFn) {
   if (!action || typeof action.type !== 'string') {
     throw Error('Invalid state action.');
   }
@@ -429,11 +533,13 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
       };
       const notBeforeDate = action.notBeforeDate !== undefined
         ? action.notBeforeDate
-        : (state.demo ? state.days[0].date : campusDate(nowFn()));
-      const proposal = createProposal(fields, state.days, {
+        : (state.demo ? state.days[0].date : campusClock(getNow()).date);
+      // Who is waiting on an answer: 'others' (default, gets a reply) or 'self' (just me, no reply).
+      const audience = raw.audience === 'self' ? 'self' : 'others';
+      const proposal = { ...pastAware(() => createProposal(fields, planDays(state), {
         existingTasks: getAllKnownTasks(state),
         notBeforeDate
-      });
+      })), audience };
       return {
         ...state,
         proposals: [...state.proposals, proposal],
@@ -464,10 +570,10 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
       };
       const notBeforeDate = action.notBeforeDate !== undefined
         ? action.notBeforeDate
-        : (state.demo ? state.days[0].date : campusDate(nowFn()));
+        : (state.demo ? state.days[0].date : campusClock(getNow()).date);
       const others = getAllKnownTasks(state).filter(item => item.id !== target.id);
-      const created = createProposal(fields, state.days, { existingTasks: others, notBeforeDate });
-      const updated = { ...created, id: target.id };
+      const created = pastAware(() => createProposal(fields, planDays(state), { existingTasks: others, notBeforeDate }));
+      const updated = { ...created, id: target.id, audience: (raw.audience ?? target.audience) === 'self' ? 'self' : 'others' };
       return {
         ...state,
         proposals: state.proposals.map(item => item.id === target.id ? updated : item),
@@ -498,12 +604,42 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
           .filter(([from, to]) => !(from === start && to === end))
           .map(window => [...window]);
       }
-      const days = state.days.map((item, index) => index === dayIndex ? { ...item, busyWindows } : item);
+      let days = state.days.map((item, index) => index === dayIndex ? { ...item, busyWindows } : item);
       // Validates the new window against the engine's own rules (HH:MM, same day).
       makeSlots(days, state.sleep);
+      // "Repeats weekly": the same recurrence the calendar import understands (RRULE FREQ=WEEKLY;COUNT),
+      // run through the engine's parseIcs so the rules and the stored block shape stay identical.
+      const repeatKeys = [];
+      if (action.type === 'ADD_BUSY_BLOCK' && action.repeatWeekly) {
+        const stamp = (date, time) => `${date.replaceAll('-', '')}T${time.replace(':', '')}00`;
+        const weeksLeft = Math.floor((state.days.length - 1 - dayIndex) / 7) + 1;
+        const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT',
+          `DTSTART;TZID=Asia/Kolkata:${stamp(day.date, start)}`, `DTEND;TZID=Asia/Kolkata:${stamp(day.date, end)}`,
+          `RRULE:FREQ=WEEKLY;COUNT=${weeksLeft}`, 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+        const repeats = parseIcs(ics, state.days);
+        if (!repeats.data.length) throw Error(repeats.warnings[0] || 'Could not repeat that block weekly.');
+        days = days.map(item => ({ ...item, busyWindows: item.busyWindows.map(window => [...window]) }));
+        for (const entry of repeats.data) {
+          const bucket = days[entry.index].busyWindows;
+          if (!bucket.some(([from, to]) => from === entry.start && to === entry.end)) {
+            bucket.push([entry.start, entry.end]);
+            bucket.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+          }
+          repeatKeys.push(`${entry.date}|${entry.start}|${entry.end}`);
+        }
+        makeSlots(days, state.sleep);
+      }
+      // Optional names for blocks the student adds ("Lab", "Shift"). UI-only; the engine only sees times.
+      const labelKey = `${day.date}|${start}|${end}`;
+      const busyLabels = { ...(state.busyLabels ?? {}) };
+      if (action.type === 'ADD_BUSY_BLOCK' && String(action.label ?? '').trim()) {
+        for (const key of repeatKeys.length ? repeatKeys : [labelKey]) busyLabels[key] = String(action.label).trim().slice(0, 60);
+      }
+      if (action.type === 'REMOVE_BUSY_BLOCK') delete busyLabels[labelKey];
       return {
         ...state,
         days,
+        busyLabels,
         pendingApprovals: [],
         selectedRepairId: null,
         lastEditedAt: nowFn(),
@@ -525,9 +661,10 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
       const proposals = state.proposals.filter(item => !targetSet.has(item.id));
       return {
         ...state,
+        decisions: [...(state.decisions ?? []), ...discarded.map(item => decisionRecord(item, 'no', nowFn()))].slice(-30),
         proposals,
         lastEditedAt: nowFn(),
-        notice: `Discarded ${discarded.map(item => `"${item.title}"`).join(', ')}. Your schedule was not changed.`
+        notice: `Said no to ${discarded.map(item => `"${item.title}"`).join(', ')}. Your week didn't change.`
       };
     }
 
@@ -550,7 +687,7 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
       const activeTasks = getActiveTasks(state);
       const options = { sleep: state.sleep };
       const combined = [...activeTasks, ...drafts];
-      const combinedEval = evaluate(combined, state.days, options);
+      const combinedEval = evaluate(combined, planDays(state), options);
       const committedDrafts = drafts.map(task => ({ ...task, isProposal: false }));
       const remainingProposals = state.proposals.filter(item => !targetSet.has(item.id));
       const timestamp = nowFn();
@@ -565,21 +702,22 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
           ...state,
           tasks,
           proposals: remainingProposals,
+          decisions: [...(state.decisions ?? []), ...committedDrafts.map(item => decisionRecord(item, 'yes', timestamp))].slice(-30),
           pendingApprovals: [],
           selectedRepairId: null,
           lastEditedAt: timestamp
         };
-        const nextEval = evaluate(getActiveTasks(nextState), nextState.days, options);
+        const nextEval = evaluate(getActiveTasks(nextState), planDays(nextState), options);
         const label = VERDICT_NAMES[nextEval.verdict] ?? nextEval.verdict;
         return {
           ...nextState,
           unresolvedConflict: nextEval.typical.feasible ? false : state.unresolvedConflict,
-          notice: `Accepted ${names}. Plan verdict is ${label}.`
+          notice: `Added ${names} to your week. Your plan ${label === 'fits' ? 'still fits' : `now ${label}`}.`
         };
       }
 
       if (mode === 'accept-repair') {
-        const repairs = findRepairs(combined, state.days, options);
+        const repairs = findRepairs(combined, planDays(state), options);
         const chosen = action.repairId
           ? repairs.find(candidate => candidate.id === action.repairId)
           : findSelfServeAcceptRepair(repairs, [...targetSet]);
@@ -595,7 +733,7 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
 
         const preRepairAllTasks = [...state.tasks.map(task => ({ ...task })), ...committedDrafts];
         const preRepairActive = [...activeTasks.map(task => ({ ...task })), ...committedDrafts];
-        const repairedActive = applyRepair(preRepairActive, state.days, chosen.id, options);
+        const repairedActive = applyRepair(preRepairActive, planDays(state), chosen.id, options);
         const tasks = mergeUpdatedTasks(preRepairAllTasks, repairedActive);
         const change = {
           id: `change-${state.appliedChanges.length + 1}-${timestamp}`,
@@ -613,17 +751,18 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
           ...state,
           tasks,
           proposals: remainingProposals,
+          decisions: [...(state.decisions ?? []), ...committedDrafts.map(item => decisionRecord(item, 'yes', timestamp))].slice(-30),
           appliedChanges: [...state.appliedChanges, change],
           pendingApprovals: [],
           selectedRepairId: null,
           lastEditedAt: timestamp
         };
-        const nextEval = evaluate(getActiveTasks(nextState), nextState.days, options);
+        const nextEval = evaluate(getActiveTasks(nextState), planDays(nextState), options);
         const label = VERDICT_NAMES[nextEval.verdict] ?? nextEval.verdict;
         return {
           ...nextState,
           unresolvedConflict: nextEval.typical.feasible ? false : state.unresolvedConflict,
-          notice: `Accepted ${names} with self-serve repair (${chosen.actions.map(item => item.label).join(' + ')}). Plan verdict is ${label}.`
+          notice: `Added ${names} with one change (${chosen.actions.map(item => item.label).join(' + ')}). Your plan ${label === 'fits' ? 'still fits' : `now ${label}`}.`
         };
       }
 
@@ -633,18 +772,22 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         ...state,
         tasks,
         proposals: remainingProposals,
+          decisions: [...(state.decisions ?? []), ...committedDrafts.map(item => decisionRecord(item, 'yes', timestamp))].slice(-30),
         pendingApprovals: [],
         selectedRepairId: null,
         lastEditedAt: timestamp
       };
-      const nextEval = evaluate(getActiveTasks(nextState), nextState.days, options);
+      const nextEval = evaluate(getActiveTasks(nextState), planDays(nextState), options);
       const hasConflict = !nextEval.typical.feasible;
       return {
         ...nextState,
         unresolvedConflict: hasConflict || state.unresolvedConflict,
-        notice: hasConflict
-          ? `Accepted ${names} by override. The unresolved deadline conflict stays visible on your plan until resolved.`
-          : `Accepted ${names} into your plan.`
+        notice: (() => {
+          const numbers = planNumbers(nextEval.typical, planDays(nextState));
+          return hasConflict && numbers && numbers.short > 0
+            ? `On your week. ${hoursShort(numbers.short)} is still short by ${numbers.weekday}.`
+            : hasConflict ? 'On your week. It still does not fit.' : `Added ${names} to your week.`;
+        })()
       };
     }
 
@@ -657,7 +800,7 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         throw Error('Invalid approval status.');
       }
       const activeTasks = getActiveTasks(state);
-      const repair = findRepairs(activeTasks, state.days, { sleep: state.sleep })
+      const repair = findRepairs(activeTasks, planDays(state), { sleep: state.sleep })
         .find(candidate => candidate.id === repairId);
       if (!repair || !repair.needsApproval) {
         throw Error('Approval status applies only to repairs that require approval.');
@@ -685,7 +828,7 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
     case 'APPLY_REPAIR': {
       const activeTasks = getActiveTasks(state);
       const options = { sleep: state.sleep };
-      const repair = findRepairs(activeTasks, state.days, options)
+      const repair = findRepairs(activeTasks, planDays(state), options)
         .find(candidate => candidate.id === action.repairId);
       if (!repair) {
         throw Error('This repair is no longer available. Preview the current plan again.');
@@ -699,7 +842,7 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         }
         approvedActionIds = repair.actions.filter(item => item.needsApproval).map(item => item.id);
       }
-      const updatedActive = applyRepair(activeTasks, state.days, repair.id, {
+      const updatedActive = applyRepair(activeTasks, planDays(state), repair.id, {
         ...options,
         approvedActionIds
       });
@@ -725,13 +868,13 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         selectedRepairId: null,
         lastEditedAt: timestamp
       };
-      const nextEval = evaluate(getActiveTasks(nextState), nextState.days, options);
+      const nextEval = evaluate(getActiveTasks(nextState), planDays(nextState), options);
       const unresolvedConflict = nextEval.typical.feasible ? false : state.unresolvedConflict;
       const label = VERDICT_NAMES[nextEval.verdict] ?? nextEval.verdict;
       return {
         ...nextState,
         unresolvedConflict,
-        notice: `${repair.needsApproval ? 'Approved' : 'Verified'} change applied. Plan verdict is now ${label}.`
+        notice: `Done. The change is made, and your plan now ${label === 'fits' ? 'fits' : label}.`
       };
     }
 
@@ -750,13 +893,17 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         unresolvedConflict: change.previousUnresolvedConflict ?? state.unresolvedConflict,
         lastEditedAt: nowFn()
       };
-      const nextEval = evaluate(getActiveTasks(nextState), nextState.days, { sleep: nextState.sleep });
+      const nextEval = evaluate(getActiveTasks(nextState), planDays(nextState), { sleep: nextState.sleep });
       const label = VERDICT_NAMES[nextEval.verdict] ?? nextEval.verdict;
       return {
         ...nextState,
-        notice: `Last applied repair undone. Plan verdict is ${label}.`
+        notice: `Change undone. Your plan now ${label === 'fits' ? 'fits' : label}.`
       };
     }
+
+    case 'REMOVE_TASK':
+    case 'UNDO_ADDED':
+      return removeTasks(state, action, nowFn);
 
     case 'SET_NOTICE':
       return { ...state, notice: String(action.notice ?? '') };
@@ -820,11 +967,11 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         calendarImportedAt: datesChanged ? null : state.calendarImportedAt,
         lastEditedAt: nowFn()
       };
-      const nextEval = evaluate(getActiveTasks(nextState), nextState.days, { sleep });
+      const nextEval = evaluate(getActiveTasks(nextState), planDays(nextState), { sleep });
       return {
         ...nextState,
         unresolvedConflict: nextEval.typical.feasible ? false : state.unresolvedConflict,
-        notice: 'Settings saved. Protected sleep window and weekly work hours updated.'
+        notice: action.quiet ? '' : 'Settings saved. Protected sleep window and weekly work hours updated.'
       };
     }
 
@@ -895,9 +1042,22 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         skippedCount ? ` ${imported.warnings.join(' ')}` : ''
       }`;
 
+      // Class names ride along beside the blocks. A replacing import drops the labels of the old calendar
+      // but keeps names the student typed for blocks they added by hand.
+      let busyLabels = state.busyLabels ?? {};
+      if (addedCount > 0) {
+        const fromCalendar = extractBusyLabels(text, state.days);
+        const kept = {};
+        for (const [key, value] of Object.entries(busyLabels)) {
+          if (!replaceExisting || typeof value === 'string') kept[key] = value;
+        }
+        busyLabels = { ...kept, ...fromCalendar };
+      }
+
       return {
         ...state,
         days,
+        busyLabels,
         calendarImportedAt,
         lastEditedAt: timestamp,
         pendingApprovals: [],
@@ -999,7 +1159,7 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
         selectedRepairId: null,
         lastEditedAt: nowFn()
       };
-      const nextEval = evaluate(getActiveTasks(nextState), nextState.days, { sleep: nextState.sleep });
+      const nextEval = evaluate(getActiveTasks(nextState), planDays(nextState), { sleep: nextState.sleep });
       const sampleText = updatedProfile
         ? updatedProfile.samples < 3
           ? `Estimate learning (${taskType}): ${updatedProfile.samples} of 3 samples recorded.`
@@ -1009,7 +1169,7 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
       return {
         ...nextState,
         unresolvedConflict: nextEval.typical.feasible ? false : state.unresolvedConflict,
-        notice: `Task feedback saved for "${task.title}" (${actualHours}h actual vs ${estimatedLikely}h estimated). ${sampleText}`.trim()
+        notice: `Logged "${task.title}": ${actualHours}h against your ${estimatedLikely}h guess. ${sampleText}`.trim()
       };
     }
 
@@ -1082,10 +1242,21 @@ export function reduceState(state, action, nowFn = () => new Date().toISOString(
 export function createStore({ storage = null, nowFn = () => new Date().toISOString() } = {}) {
   const loaded = loadState(storage);
   let state;
+  // The interface never presents the fixture as the student's week. A plan an older build
+  // saved as the fixture is not shown; if it stashed the student's own week, that is restored.
+  // Nothing is written on load. The raw value is archived (not deleted) before the first save.
+  let archiveRaw = null;
   if (loaded.state) {
+    let candidate = loaded.state;
+    if (candidate.demo) {
+      try { archiveRaw = storage?.getItem(STORAGE_KEY) ?? null; } catch { archiveRaw = null; }
+      candidate = candidate.personalBackup
+        ? { ...candidate.personalBackup, personalBackup: null, screen: candidate.screen, notice: '' }
+        : { ...makeInitialState({ fixed: false, demo: false, nowIso: nowFn() }), displayName: candidate.displayName ?? '' };
+    }
     try {
-      const derived = deriveView(loaded.state);
-      state = { ...loaded.state, weekIndex: derived.weekIndex };
+      const derived = deriveView(candidate);
+      state = { ...candidate, weekIndex: derived.weekIndex };
     } catch {
       state = {
         ...makeInitialState({ fixed: false, demo: false, nowIso: nowFn() }),
@@ -1108,7 +1279,11 @@ export function createStore({ storage = null, nowFn = () => new Date().toISOStri
       try { clearState(storage); }
       catch { persistedNotice = 'Browser storage is unavailable. Data cleared for this session.'; }
     } else if (STATEFUL_ACTIONS.has(action.type)) {
-      try { saveState(storage, state); }
+      try {
+        if (archiveRaw !== null && storage.getItem(ARCHIVE_KEY) === null) storage.setItem(ARCHIVE_KEY, archiveRaw);
+        archiveRaw = null;
+        saveState(storage, state);
+      }
       catch { persistedNotice = 'Browser storage is unavailable. Changes are open for this session.'; }
     }
     if (persistedNotice !== state.notice) {

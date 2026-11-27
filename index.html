@@ -11,20 +11,18 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <div id="sr-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="shell">
+    <div class="blob" id="blob" aria-hidden="true"></div>
     <header class="topbar">
       <div class="topbar-inner">
         <a class="brand" href="#/home" data-home="home" aria-label="The 25th Hour, home">
-          <svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false">
-            <path d="M24.9 8.6A12 12 0 1 0 28 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
-            <path d="M16 9.5V16l4.2 2.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <svg class="brand-mark" viewBox="0 0 26 26" width="26" height="26" aria-hidden="true" focusable="false" fill="none">
+            <path class="mark-stroke" d="M21.5 8.5A10 10 0 1 0 23 13" stroke-width="2" stroke-linecap="round"/>
+            <path class="mark-stroke" d="M13 7.5V13l3.5 2.2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle class="mark-dot" cx="22.4" cy="10.4" r="1.9"/>
           </svg>
           <span class="brand-text">The <span class="brand-25">25</span>th Hour</span>
         </a>
         <div class="topbar-links">
-          <span id="example-chip" class="example-chip" hidden>
-            <span>Example data</span>
-            <button type="button" id="leave-example" class="link-button">Leave example</button>
-          </span>
           <a class="topbar-link" id="nav-week" href="#/week" data-screen="week">My week</a>
         </div>
       </div>
@@ -35,15 +33,17 @@
       <div id="error-region" class="banner banner-alert" role="alert" hidden></div>
 
       <section id="screen-home" class="screen-panel" aria-label="Home"></section>
-      <section id="screen-check" class="screen-panel" aria-label="Check a request" hidden></section>
+      <section id="screen-start" class="screen-panel" aria-label="First run" hidden></section>
+      <section id="screen-check" class="screen-panel" aria-label="Before you say yes" hidden></section>
+      <section id="screen-cost" class="screen-panel" aria-label="What this yes costs" hidden></section>
       <section id="screen-week" class="screen-panel" aria-label="My week" hidden></section>
       <section id="screen-rescue" class="screen-panel" aria-label="Reset" hidden></section>
-      <section id="screen-feedback" class="screen-panel" aria-label="Review" hidden></section>
+      <section id="screen-feedback" class="screen-panel" aria-label="Past estimates" hidden></section>
       <section id="screen-settings" class="screen-panel" aria-label="Settings" hidden></section>
     </main>
 
     <footer class="site-footer">
-      <p>Everything stays in this browser. A feasible plan makes room to sleep; it can't guarantee sleep. Not medical advice.</p>
+      <p>Everything stays in this browser. A feasible plan makes room to sleep. It can't make you sleep.</p>
     </footer>
   </div>
   <script type="module" src="./src/ui/app.mjs"></script>

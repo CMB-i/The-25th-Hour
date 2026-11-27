@@ -2,6 +2,7 @@ import { plannedSleepMinutes } from '../engine/capacity.mjs';
 import { TASK_TYPES } from '../engine/scheduler.mjs';
 import { fmtMinutes, h } from './dom.mjs';
 import { resetCheckFormDraft } from './render-check.mjs';
+import { renderWorkHours } from './hours-editor.mjs';
 import { formatWeeklyWindowsText, isSetUp } from './state.mjs';
 
 const TYPE_NAMES = {
@@ -73,71 +74,13 @@ export function countBusyWindows(days = []) {
   return { totalWindows, daysWithEvents: activeDays.length, activeDays };
 }
 
-const DAY_ORDER = [
-  [1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday'], [6, 'Saturday'], [0, 'Sunday']
-];
-
-function renderWorkHoursEditor(state, onChange) {
-  const rows = (state.settings?.weeklyWorkWindows ?? [[], [], [], [], [], [], []]).map(day =>
-    (day ?? []).map(pair => [...pair]));
-  while (rows.length < 7) rows.push([]);
-  const box = h('div', { className: 'hours-editor', id: 'hours-editor' });
-
-  function draw() {
-    box.replaceChildren(
-      ...DAY_ORDER.map(([dayIndex, name]) =>
-        h('fieldset', { className: 'hours-day' },
-          h('legend', {}, name),
-          rows[dayIndex].length
-            ? rows[dayIndex].map((pair, i) => {
-                const startId = `hours-${dayIndex}-${i}-start`;
-                const endId = `hours-${dayIndex}-${i}-end`;
-                return h('div', { className: 'hours-row' },
-                  h('div', { className: 'form-field' },
-                    h('label', { for: startId }, `${name} from`),
-                    h('input', {
-                      id: startId, type: 'time', step: '1800', value: pair[0],
-                      onInput: ev => { pair[0] = ev.currentTarget.value; onChange(); }
-                    })),
-                  h('div', { className: 'form-field' },
-                    h('label', { for: endId }, `${name} to`),
-                    h('input', {
-                      id: endId, type: 'time', step: '1800', value: pair[1],
-                      onInput: ev => { pair[1] = ev.currentTarget.value; onChange(); }
-                    })),
-                  h('button', {
-                    type: 'button', className: 'link-button',
-                    'aria-label': `Remove ${name} window ${pair[0]} to ${pair[1]}`,
-                    onClick: () => { rows[dayIndex].splice(i, 1); draw(); onChange(); }
-                  }, 'Remove'));
-              })
-            : h('p', { className: 'agenda-empty' }, 'No work hours.'),
-          h('button', {
-            type: 'button', className: 'link-button',
-            onClick: () => { rows[dayIndex].push(['16:00', '18:00']); draw(); onChange(); }
-          }, `Add a ${name} window`)
-        ))
-    );
-  }
-  draw();
-  return {
-    node: box,
-    getRows: () => rows.map(day => day.map(pair => [...pair])),
-    fillWeekdays: () => {
-      for (const dayIndex of [1, 2, 3, 4, 5]) rows[dayIndex] = [['16:00', '20:00']];
-      draw();
-      onChange();
-    }
-  };
-}
-
 /**
  * Renders Settings: sleep, work hours, preferences, estimates and local data.
  */
 export function renderSettingsScreen(container, { state, derived, dispatch }) {
   const firstDate = state.days[0]?.date ?? '';
   const sleepMins = plannedSleepMinutes(state.sleep);
-  const needsSetup = !state.demo && !isSetUp(state);
+  const needsSetup = !isSetUp(state);
 
   const settingsError = h('p', { id: 'settings-error', className: 'form-error-banner', role: 'alert', hidden: true });
   const clearError = () => { settingsError.textContent = ''; settingsError.hidden = true; };
@@ -158,7 +101,10 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
   const windowsTextarea = h('textarea', {
     id: 'settings-windows', name: 'windows', rows: '5', onInput: clearError
   }, initialText);
-  const hours = renderWorkHoursEditor(state, clearError);
+  const hours = renderWorkHours({
+    initialRows: state.settings?.weeklyWorkWindows ?? [[], [], [], [], [], [], []],
+    onChange: clearError
+  });
 
   const settingsForm = h('form', {
     id: 'settings-form',
@@ -194,14 +140,10 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
       h('h2', { id: 'g-hours' }, 'When can you work?'),
       h('p', { className: 'section-help' },
         'Add the hours you could do deadline work each week. Busy blocks like classes come off these hours.'),
-      h('button', {
-        type: 'button', id: 'fill-weekdays', className: 'link-button',
-        onClick: () => hours.fillWeekdays()
-      }, 'Start with weekdays 16:00 to 20:00'),
       hours.node,
       h('details', { className: 'quiet-details', id: 'hours-text' },
         h('summary', {}, 'Edit as text instead'),
-        h('p', { className: 'section-help' }, 'One window per line, for example Mon 16:00-20:00. If you change this box, it is used instead of the fields above.'),
+        h('p', { className: 'section-help' }, 'One window per line, such as Mon 16:00-20:00. If you change this box, it is used instead of the fields above.'),
         h('label', { for: 'settings-windows' }, 'Work windows as text'),
         windowsTextarea
       ),
@@ -246,10 +188,10 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
   const profileRows = (derived.estimateProfiles ?? []).map(profile => {
     const label = TYPE_NAMES[profile.type] ?? profile.type;
     const statusText = profile.samples === 0
-      ? 'Default 1.0× (0 of 3 samples)'
+      ? 'Default 1.0× (0 of 3 finished tasks)'
       : profile.samples < 3
-        ? `Learning (${profile.samples} of 3 samples · current ${Number(profile.ratio.toFixed(3))}×)`
-        : `Active (${Number(profile.ratio.toFixed(3))}× from ${profile.samples} samples)`;
+        ? `Learning (${profile.samples} of 3 finished tasks · current ${Number(profile.ratio.toFixed(3))}×)`
+        : `Active (${Number(profile.ratio.toFixed(3))}× from ${profile.samples} finished tasks)`;
     return h('div', { className: 'estimate-row' },
       h('strong', {}, label),
       h('span', {}, `${Number(profile.ratio.toFixed(3))}×`),
@@ -258,11 +200,11 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
   const estimates = h('details', { className: 'quiet-details', id: 'estimate-profiles' },
     h('summary', {}, 'How your estimates are learned'),
     h('p', { className: 'section-help' },
-      'After 3 finished tasks of a type, Check a request can suggest an adjusted estimate next to yours. It never changes your number silently.'),
+      'After 3 finished tasks of a type, Run the numbers can suggest an adjusted estimate next to yours. It never changes your number silently.'),
     h('div', { className: 'estimate-table' },
       profileRows.length
         ? profileRows
-        : TASK_TYPES.map(t => h('div', { className: 'estimate-row' }, h('strong', {}, TYPE_NAMES[t] ?? t), h('span', {}, '1×'), h('span', {}, 'Default (0 of 3 samples)')))
+        : TASK_TYPES.map(t => h('div', { className: 'estimate-row' }, h('strong', {}, TYPE_NAMES[t] ?? t), h('span', {}, '1×'), h('span', {}, 'Default (0 of 3 finished tasks)')))
     )
   );
 
@@ -297,9 +239,7 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
   const danger = h('section', { className: 'settings-group danger-zone', 'aria-labelledby': 'g-danger' },
     h('h2', { id: 'g-danger' }, 'Delete everything'),
     h('p', { className: 'section-help' },
-      state.demo && state.personalBackup
-        ? 'This also deletes your own week, which is kept safely while an example is showing. To return to it instead, leave the example.'
-        : 'Removes your plan, settings, approvals and feedback from this browser. This cannot be undone.'),
+      'Removes your plan, settings, approvals and feedback from this browser. This cannot be undone.'),
     h('button', {
       id: 'clear', type: 'button', className: 'button button-danger-outline',
       onClick: () => {
@@ -317,11 +257,8 @@ export function renderSettingsScreen(container, { state, derived, dispatch }) {
       h('h1', { className: 'screen-title' }, needsSetup ? 'Set up my week' : 'Settings'),
       h('p', { className: 'screen-lede' },
         needsSetup
-          ? 'Two things: when you sleep, and when you can work. Busy time and deadlines come next, in My week.'
+          ? 'When you sleep and when you can work. Busy time and deadlines are added in My week.'
           : 'Sleep, work hours and preferences.'),
-      state.demo
-        ? h('p', { className: 'example-line' }, 'An example is showing. Changes here apply to the example, not to your own week.')
-        : null,
       h('button', {
         type: 'button', className: 'link-button',
         onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
