@@ -6,7 +6,9 @@ import {
   fmtMinutes,
   fmtSignedHours,
   fmtTimestamp,
-  h
+  h,
+  setBlobTone,
+  svg
 } from './dom.mjs';
 
 const TYPE_LABELS = {
@@ -54,51 +56,78 @@ export function findOpenTasksWithLearnedSuggestions(state, profiles = []) {
   return results;
 }
 
+// Which task was just logged on this screen (UI-only), so the card can say how it went.
+let justLogged = null;
+
+const hoursShort = value => `${Math.round(value * 10) / 10}h`;
+
 /**
- * Renders Screen 4: Did It Work? (F3 Reality Feedback & 7-Day Review).
+ * One insight, only when the estimate-learning data has at least three finished tasks of a type.
+ * Every number comes from the logged entries and the existing suggestion function.
+ */
+export function buildInsight(state, profiles) {
+  const ready = profiles.filter(profile => profile.samples >= 3);
+  if (!ready.length) return null;
+  const best = [...ready].sort((a, b) => Math.abs(b.ratio - 1) - Math.abs(a.ratio - 1))[0];
+  const entries = state.feedback.tasks.filter(entry => entry.type === best.type).slice(-best.samples);
+  if (entries.length < 3) return null;
+  const labels = TYPE_LABELS[best.type] ?? TYPE_LABELS.other;
+  const avgEst = entries.reduce((sum, entry) => sum + entry.estimatedLikely, 0) / entries.length;
+  const avgAct = entries.reduce((sum, entry) => sum + entry.actualHours, 0) / entries.length;
+  const minutes = Math.round(Math.abs(avgAct - avgEst) * 60);
+  const guess = Math.round(avgEst * 2) / 2;
+  const suggestion = getEstimateSuggestion(best, guess);
+  const direction = avgAct >= avgEst ? 'long' : 'short';
+  return {
+    type: best.type,
+    title: minutes === 0
+      ? `Your ${labels.plural} come out right on your guess.`
+      : `Your ${labels.plural} run about ${minutes} minutes ${direction}.`,
+    sub: `You guess ${hoursShort(avgEst)}, and the last ${entries.length} took ${hoursShort(avgAct)} on average.${suggestion !== null && suggestion !== guess ? ` I'll offer "Use ${hoursShort(suggestion)}?" when you check a ${labels.label.toLowerCase()}. Your call every time.` : ''}`
+  };
+}
+
+/** The ledger: guessed versus took, newest first. */
+export function buildLedger(state, limit = 8) {
+  const entries = [...state.feedback.tasks].reverse().slice(0, limit);
+  const max = Math.max(1, ...entries.map(entry => Math.max(entry.estimatedLikely, entry.actualHours)));
+  return entries.map(entry => {
+    const delta = Math.round((entry.actualHours - entry.estimatedLikely) * 10) / 10;
+    return {
+      title: entry.title ?? entry.taskId,
+      est: entry.estimatedLikely,
+      act: entry.actualHours,
+      delta: delta > 0 ? `${delta}h over` : delta < 0 ? `${Math.abs(delta)}h under` : 'On the nose',
+      tone: delta > 0 ? 'over' : 'ok',
+      estPct: Math.round((entry.estimatedLikely / max) * 1000) / 10,
+      actPct: Math.round((entry.actualHours / max) * 1000) / 10
+    };
+  });
+}
+
+/**
+ * Renders Screen: Review (F3 Reality Feedback & 7-Day Review).
  */
 export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   const profiles = derived.estimateProfiles ?? [];
-  const currentDay = state.demo
-    ? (state.days[3]?.date ?? '2026-11-19')
-    : (campusDate(new Date().toISOString()) ?? state.days[0]?.date ?? '2026-11-19');
+  const currentDay = campusDate(new Date().toISOString()) ?? state.days[0]?.date ?? '2026-11-19';
   const eligibleTasks = findEligibleTasksForFeedback(state, currentDay);
   const completedIds = new Set(state.feedback.tasks.map(entry => entry.taskId));
   const selectableTasks = state.tasks.filter(task => !task.removed);
   const openTasks = selectableTasks.filter(task => !completedIds.has(task.id));
   const defaultTask = eligibleTasks[0] ?? openTasks[0] ?? selectableTasks[0] ?? null;
 
-  const headerBar = h('section', { className: 'panel feedback-header' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('div', { className: 'panel-label' },
-          h('span', { className: 'panel-index' }, '04'),
-          'REALITY FEEDBACK · DID IT WORK?'
-        ),
-        h('h2', {}, 'Close the loop on estimates & protected sleep.'),
-        h('p', { className: 'helper' },
-          'Log actual hours once a task finishes, optionally record morning sleep and stress, and review the last 7 days. No scores, streaks, or guilt mechanics.'
-        )
-      ),
-      h('span', { className: 'pill' }, `${state.feedback.tasks.length} completed · ${state.feedback.sleepReports.length} night(s) logged`)
-    ),
-    h('div', { className: 'quick-actions' },
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
-      }, '← Back to My Week'),
-      h('button', {
-        type: 'button',
-        className: 'button button-secondary',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'check' })
-      }, 'Check a commitment (Should I Say Yes?)'),
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'settings' })
-      }, 'Imports & Settings')
-    )
+  setBlobTone('tan');
+  const headerBar = h('div', { className: 'review-head' },
+    h('button', {
+      type: 'button', id: 'review-back', className: 'back-link',
+      onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
+    },
+      svg('svg', { width: '18', height: '18', viewBox: '0 0 18 18', fill: 'none', 'aria-hidden': 'true' },
+        svg('path', { d: 'M11 3L5 9l6 6', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })),
+      'My week'),
+    h('div', { className: 'eyebrow' }, 'PAST ESTIMATES'),
+    h('h1', { className: 'screen-title review-title' }, 'What my yeses cost.')
   );
 
   // 1. Task Completion & Actual-Hours Prompt Form
@@ -154,15 +183,18 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
     )
   );
 
-  const actualHoursInput = h('input', {
-    id: 'feedback-actual-hours',
-    name: 'actualHours',
-    type: 'number',
-    min: '0',
-    max: '60',
-    step: '0.5',
-    required: true
-  });
+  const actualHoursInput = h('input', { id: 'feedback-actual-hours', name: 'actualHours', type: 'hidden' });
+  const hoursOut = h('span', { id: 'log-hours-out', className: 'step-value', 'aria-live': 'polite' }, '—');
+  const guessLine = h('p', { id: 'log-guess', className: 'log-guess' }, '');
+  const logTitle = h('h2', { id: 'log-title', className: 'card-title' }, 'How long did it take?');
+  const syncHoursOut = () => { hoursOut.textContent = actualHoursInput.value === '' ? '—' : fmtHours(Number(actualHoursInput.value)); };
+  const bumpHours = delta => {
+    const current = Number(actualHoursInput.value);
+    const next = Math.min(60, Math.max(0, Math.round(((Number.isFinite(current) ? current : 0) + delta) * 2) / 2));
+    actualHoursInput.value = String(next);
+    syncHoursOut();
+  };
+  actualHoursInput.addEventListener('input', syncHoursOut);
 
   const recordedAtInput = h('input', {
     id: 'feedback-recorded-at',
@@ -183,9 +215,12 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
     const task = selectableTasks.find(item => item.id === taskSelect.value) ?? defaultTask;
     if (!task) {
       actualHoursInput.value = '';
+      syncHoursOut();
       recordedAtInput.value = '';
       asPlannedBtn.textContent = 'As planned';
       asPlannedBtn.disabled = true;
+      logTitle.textContent = 'Nothing to log yet.';
+      guessLine.textContent = '';
       return;
     }
     const previous = state.feedback.tasks.find(item => item.taskId === task.id);
@@ -193,6 +228,9 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
     const resolvedType = previous?.type ?? task.type ?? 'other';
     typeSelect.value = TASK_TYPES.includes(resolvedType) ? resolvedType : 'other';
     actualHoursInput.value = String(previous?.actualHours ?? estHours);
+    syncHoursOut();
+    logTitle.textContent = `How long did ${task.title} take?`;
+    guessLine.textContent = `You guessed ${fmtHours(estHours)}.`;
     const defaultDate = state.days[task.targetDay]?.date ?? currentDay;
     const rawTime = previous?.recordedAt ?? `${defaultDate}T18:00`;
     recordedAtInput.value = rawTime.slice(0, 16);
@@ -208,6 +246,7 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   function submitTaskCompletion(asPlanned) {
     clearFeedbackError();
     try {
+      justLogged = taskSelect.value;
       dispatch({
         type: 'RECORD_FEEDBACK',
         taskId: taskSelect.value,
@@ -217,6 +256,7 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
         asPlanned
       }, { rethrow: true });
     } catch (error) {
+      justLogged = null;
       feedbackError.textContent = error?.message || 'Unable to save task feedback.';
       feedbackError.hidden = false;
     }
@@ -226,68 +266,73 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
 
   const openSuggestions = findOpenTasksWithLearnedSuggestions(state, profiles);
 
-  const taskFeedbackPanel = h('section', { className: 'panel task-feedback-panel' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('span', { className: 'panel-label' }, '1 · ACTUAL HOURS PER TASK'),
-        h('h3', {}, 'How long did it actually take?')
-      ),
-      h('span', { className: 'pill' }, 'Half-hour steps · 1-tap confirm')
-    ),
-    promptBanner,
+  const logged = justLogged ? state.feedback.tasks.find(entry => entry.taskId === justLogged) : null;
+  const diff = logged ? Math.round((logged.actualHours - logged.estimatedLikely) * 10) / 10 : 0;
+  const loggedCard = logged
+    ? h('section', { id: 'logged-card', className: 'card log-card' },
+        h('div', { className: 'eyebrow log-eyebrow' }, 'LOGGED'),
+        h('h2', { className: 'card-title' },
+          diff > 0 ? `About ${fmtHours(diff)} longer than you guessed.` : diff < 0 ? 'Quicker than you guessed. Nice.' : 'Right on your guess.'),
+        h('p', { className: 'step-text' }, 'Saved on this device. Next time I suggest an estimate for something like it, this counts.'),
+        h('button', {
+          type: 'button', id: 'log-change', className: 'link-button',
+          onClick: () => { justLogged = null; dispatch({ type: 'SET_NOTICE', notice: '' }); }
+        }, 'Change it'))
+    : null;
+
+  const taskFeedbackPanel = h('div', { className: 'log-block' },
+    loggedCard,
     h('form', {
       id: 'completion-form',
-      className: 'commitment-form',
+      className: 'card log-card',
+      hidden: Boolean(logged),
       novalidate: true,
       onSubmit: ev => {
         ev.preventDefault();
         submitTaskCompletion(false);
       }
     },
-      h('div', { className: 'form-grid-two' },
-        h('div', { className: 'form-field' },
-          h('label', { for: 'feedback-task-id' }, 'Task *'),
-          taskSelect
-        ),
-        h('div', { className: 'form-field' },
-          h('label', { for: 'feedback-task-type' }, 'Task type (for estimate learning)'),
-          typeSelect
-        )
-      ),
-      h('div', { className: 'form-grid-two' },
-        h('div', { className: 'form-field' },
-          h('label', { for: 'feedback-actual-hours' }, 'Actual hours taken (0.5h steps) *'),
-          actualHoursInput,
-          h('small', { className: 'field-hint' }, 'Preset to typical estimate. Edit or tap "As planned".')
-        ),
-        h('div', { className: 'form-field' },
-          h('label', { for: 'feedback-recorded-at' }, 'Completion time (campus time) *'),
-          recordedAtInput,
-          h('small', { className: 'field-hint' }, 'Used to check whether target and hard deadlines were met.')
-        )
-      ),
+      h('div', { className: 'eyebrow log-eyebrow' }, eligibleTasks.length ? 'JUST FINISHED?' : 'LOG A FINISHED TASK'),
+      logTitle,
+      guessLine,
+      h('div', { className: 'stepper', role: 'group', 'aria-label': 'Hours it took' },
+        h('button', { type: 'button', id: 'log-less', className: 'step-btn', 'aria-label': 'Less time', onClick: () => bumpHours(-0.5) }, '−'),
+        hoursOut,
+        h('button', { type: 'button', id: 'log-more', className: 'step-btn', 'aria-label': 'More time', onClick: () => bumpHours(0.5) }, '+')),
+      actualHoursInput,
       feedbackError,
-      h('div', { className: 'form-submit-row' },
-        h('button', {
-          type: 'submit',
-          className: 'button button-primary',
-          disabled: selectableTasks.length === 0
-        }, 'Mark completed and save'),
-        asPlannedBtn
-      )
+      h('button', {
+        type: 'submit', id: 'log-it', className: 'button button-primary',
+        disabled: selectableTasks.length === 0
+      }, 'Log it'),
+      asPlannedBtn,
+      h('details', { className: 'quiet-details', id: 'log-other' },
+        h('summary', {}, 'Log a different task'),
+        h('div', { className: 'form-field' },
+          h('label', { for: 'feedback-task-id' }, 'Which task?'),
+          taskSelect),
+        h('div', { className: 'form-field' },
+          h('label', { for: 'feedback-task-type' }, 'What kind of task is it?'),
+          typeSelect,
+          h('small', { className: 'field-hint' }, 'Helps the app learn how long your tasks really take.')),
+        h('div', { className: 'form-field' },
+          h('label', { for: 'feedback-recorded-at' }, 'When did you finish?'),
+          recordedAtInput,
+          h('small', { className: 'field-hint' }, 'Used to check whether target and hard deadlines were met.'))
+      ),
+      promptBanner
     ),
     openSuggestions.length
       ? h('div', { className: 'open-suggestions-stack' },
-          h('span', { className: 'field-eyebrow' }, 'OPTIONAL LEARNED ESTIMATE SUGGESTIONS FOR OPEN TASKS'),
           openSuggestions.map(({ task, profile, suggestedHours }) => {
             const labels = TYPE_LABELS[profile.type] ?? TYPE_LABELS.other;
-            return h('div', { className: 'estimate-suggestion-banner', role: 'status' },
+            return h('div', { className: 'learned-line', role: 'status' },
               h('span', {},
                 `For "${task.title}": You said ${fmtHours(task.likely)}. Your last ${profile.samples} ${labels.plural} took ${Number(profile.ratio.toFixed(1))}× (${Number(profile.ratio.toFixed(3))}×) your estimate. Use ${fmtHours(suggestedHours)}?`
               ),
               h('button', {
                 type: 'button',
-                className: 'button button-secondary button-sm',
+                className: 'learned-btn',
                 onClick: () => dispatch({ type: 'APPLY_ESTIMATE_SUGGESTION', taskId: task.id })
               }, `Use ${fmtHours(suggestedHours)}`)
             );
@@ -345,8 +390,7 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   const sleepPanel = h('section', { className: 'panel sleep-feedback-panel' },
     h('div', { className: 'panel-title-line' },
       h('div', {},
-        h('span', { className: 'panel-label' }, '2 · OPTIONAL MORNING SLEEP & STRESS CHECK-IN'),
-        h('h3', {}, 'Sleep & stress report (optional)')
+        h('h3', {}, 'Sleep and stress report')
       ),
       h('span', { className: 'pill' }, `Protected opportunity: ${fmtHours(plannedSleepHrs)}/night`)
     ),
@@ -418,10 +462,10 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
     const label = (TYPE_LABELS[profile.type] ?? TYPE_LABELS.other).label;
     const example4h = getEstimateSuggestion(profile, 4);
     const detail = profile.samples === 0
-      ? `${profile.type}: 1× (0 samples)`
+      ? `${profile.type}: 1× (no finished tasks yet)`
       : profile.samples < 3
         ? `${profile.type}: ${Number(profile.ratio.toFixed(3))}× — learning (${profile.samples} of 3)`
-        : `${profile.type}: ${Number(profile.ratio.toFixed(3))}× (${profile.samples} samples${example4h ? `, e.g. 4h → ${fmtHours(example4h)}` : ''})`;
+        : `${profile.type}: ${Number(profile.ratio.toFixed(3))}× (${profile.samples} finished tasks${example4h ? `, so a 4h estimate becomes ${fmtHours(example4h)}` : ''})`;
     return h('li', { className: 'task-row' },
       h('div', { className: 'task-row-title' },
         h('strong', {}, `${label} (${profile.type})`),
@@ -493,8 +537,7 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
   const reviewPanel = h('section', { id: 'review', className: 'panel review-panel' },
     h('div', { className: 'panel-title-line' },
       h('div', {},
-        h('span', { className: 'panel-label' }, '3 · SEVEN-DAY REVIEW'),
-        h('h3', {}, `Did it work? (${review.fromDate} to ${review.throughDate})`)
+        h('h3', {}, `Seven-day report (${review.fromDate} to ${review.throughDate})`)
       ),
       h('span', { className: 'pill' }, `${review.plannedDays} planned day(s) in window`)
     ),
@@ -524,5 +567,42 @@ export function renderFeedbackScreen(container, { state, derived, dispatch }) {
     )
   );
 
-  container.replaceChildren(headerBar, taskFeedbackPanel, sleepPanel, reviewPanel);
+  const insight = buildInsight(state, profiles);
+  const insightCard = insight
+    ? h('section', { id: 'insight-card', className: 'insight-card' },
+        h('div', { className: 'eyebrow insight-eyebrow' }, "WHAT I'VE NOTICED"),
+        h('p', { className: 'insight-title' }, insight.title),
+        h('p', { className: 'insight-sub' }, insight.sub))
+    : null;
+  const ledger = buildLedger(state);
+  const ledgerCard = ledger.length
+    ? h('section', { id: 'ledger', className: 'ledger' },
+        h('h2', { className: 'section-title' }, 'The ledger'),
+        ledger.map(row =>
+          h('div', { className: 'ledger-row' },
+            h('div', { className: 'ledger-head' },
+              h('span', { className: 'ledger-title' }, row.title),
+              h('span', { className: `ledger-delta ${row.tone}` }, row.delta)),
+            h('div', { className: 'ledger-bars', role: 'img', 'aria-label': `${row.title}: guessed ${fmtHours(row.est)}, took ${fmtHours(row.act)}.` },
+              h('div', { className: 'ledger-bar-row' },
+                h('span', { className: 'ledger-bar-label' }, 'Guessed'),
+                h('div', { className: 'ledger-bar est', style: `width:${row.estPct}%` }),
+                h('span', { className: 'ledger-bar-value' }, fmtHours(row.est))),
+              h('div', { className: 'ledger-bar-row' },
+                h('span', { className: 'ledger-bar-label' }, 'Took'),
+                h('div', { className: `ledger-bar act ${row.tone}`, style: `width:${row.actPct}%` }),
+                h('span', { className: 'ledger-bar-value strong' }, fmtHours(row.act)))))))
+    : null;
+
+  const sleepDetails = h('details', { className: 'quiet-details', id: 'sleep-details' },
+    h('summary', {}, 'Sleep and stress (optional)'),
+    h('p', { className: 'section-help' }, 'Only if you want it. Logging how you slept next to what you said yes to is the clearest way to see what a week really cost.'),
+    sleepPanel
+  );
+  const historyDetails = h('details', { className: 'quiet-details', id: 'history-details' },
+    h('summary', {}, `Seven-day report (${state.feedback.tasks.length} logged)`),
+    reviewPanel
+  );
+
+  container.replaceChildren(...[headerBar, taskFeedbackPanel, insightCard, ledgerCard, sleepDetails, historyDetails].filter(Boolean));
 }

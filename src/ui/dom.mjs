@@ -103,9 +103,9 @@ export function taskTagLabel(tag) {
 
 export function verdictLabel(verdict) {
   return {
-    feasible: 'Feasible',
-    'at-risk': 'At risk',
-    infeasible: 'Infeasible'
+    feasible: 'Fits',
+    'at-risk': 'Tight',
+    infeasible: "Doesn't fit"
   }[verdict] ?? String(verdict ?? '');
 }
 
@@ -143,11 +143,11 @@ export function buildVerdictCopy(evaluation, days) {
 
   if (evaluation.verdict === 'at-risk') {
     const cons = deadlineCost(evaluation.conservative, days);
-    let body = 'Typical estimates fit, with limited conservative buffer.';
+    let body = 'Your estimates fit, with little room if things run long.';
     if (cons && cons.shortfallHours > 0) {
-      body = `Typical estimates fit. If tasks run long, ${cons.weekday} (${cons.date}) could be ${fmtHours(cons.shortfallHours)} short.`;
+      body = `Your estimates fit. If tasks run long, ${cons.weekday} (${cons.date}) could be ${fmtHours(cons.shortfallHours)} short.`;
     } else if (cons) {
-      body = `Typical estimates fit. If tasks run long, ${cons.weekday} (${cons.date}) has only ${fmtHours(cons.marginHours)} to spare.`;
+      body = `Your estimates fit. If tasks run long, ${cons.weekday} (${cons.date}) has only ${fmtHours(cons.marginHours)} to spare.`;
     }
     return {
       headline,
@@ -209,4 +209,21 @@ export async function copyToClipboard(text) {
   }
   area.remove();
   return ok;
+}
+
+/** Tints the soft circle behind the page: 'coral' (default), 'sage' for good news, 'tan' for history. */
+export function setBlobTone(tone = 'coral') {
+  if (typeof document === 'undefined') return;
+  const blob = document.getElementById('blob');
+  if (blob) blob.dataset.tone = tone;
+}
+
+/** SVG element builder (SVG needs its own namespace). */
+export function svg(tag, attrs = {}, ...children) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value !== undefined && value !== null && value !== false) node.setAttribute(key, String(value));
+  }
+  for (const child of children.flat()) if (child) node.append(child);
+  return node;
 }

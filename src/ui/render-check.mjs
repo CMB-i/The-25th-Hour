@@ -1,146 +1,43 @@
 import { defaultRange, roundHalfHour } from '../engine/commitments.mjs';
+import { weekdayName as weekdayNameOf } from '../engine/dates.mjs';
 import { deadlineCost, verdictText } from '../engine/evaluate.mjs';
 import { getEstimateSuggestion } from '../engine/feedback.mjs';
-import { draftApprovalRequest } from '../engine/repairs.mjs';
 import { isHalfHour, TASK_TYPES } from '../engine/scheduler.mjs';
 import {
-  buildVerdictCopy,
+  analyzeRequest,
+  buildReply,
+  buildReplyTabs,
+  dayLabel,
+  describeBookedWeek,
+  hoursPhrase
+} from './check-model.mjs';
+import {
+  copyToClipboard,
   fmtHours,
-  fmtShortDate,
-  fmtShortWeekday,
   fmtSignedHours,
   h,
+  setBlobTone,
+  svg,
   taskTag,
-  taskTagLabel,
-  verdictClass,
-  verdictIcon,
   verdictLabel
 } from './dom.mjs';
+import { hasWorkWindows, renderRangePicker, saveHoursFor } from './hours-editor.mjs';
+import { makeCopyControls } from './reply-slip.mjs';
+import { clockText, namesJoined, verifyWait } from './night.mjs';
+import { openWeekBusy } from './render-week.mjs';
 import { findSelfServeAcceptRepair } from './state.mjs';
+import { getUi, resetCheckFormDraft, resetRequestUi, session } from './check-session.mjs';
+import {
+  describeEstimateSuggestion,
+  draftFromProposal,
+  effectiveTaskType,
+  mapProposalErrorToField,
+  renderRequestForm
+} from './request-form.mjs';
 
-const TASK_TYPE_LABELS = {
-  other: { singular: 'other task', plural: 'other tasks', label: 'Other' },
-  problem_set: { singular: 'problem set', plural: 'problem sets', label: 'Problem set' },
-  lab: { singular: 'lab', plural: 'labs', label: 'Lab' },
-  report: { singular: 'report', plural: 'reports', label: 'Report' },
-  reading: { singular: 'reading', plural: 'readings', label: 'Reading' },
-  project: { singular: 'project', plural: 'projects', label: 'Project' },
-  club: { singular: 'club task', plural: 'club tasks', label: 'Club' }
-};
+export { describeEstimateSuggestion, effectiveTaskType, mapProposalErrorToField, renderRequestForm, resetCheckFormDraft };
 
-// Preserves in-progress draft inputs across re-renders until form submission succeeds or resets.
-let formDraft = null;
 
-function defaultDeadlineDate(days, weekIndex = 0) {
-  if (!days.length) return '';
-  const thursdayIndex = Math.min(days.length - 1, weekIndex * 7 + 3);
-  return days[thursdayIndex]?.date ?? days[0].date;
-}
-
-function getFormDraft(state) {
-  const firstDate = state.days[0]?.date ?? '';
-  const lastDate = state.days[state.days.length - 1]?.date ?? '';
-  const proposalCount = state.proposals.length;
-  if (!formDraft || formDraft.anchor !== firstDate || formDraft.proposalCount !== proposalCount) {
-    formDraft = {
-      anchor: firstDate,
-      proposalCount,
-      title: '',
-      likely: '',
-      min: '',
-      max: '',
-      deadline: defaultDeadlineDate(state.days, state.weekIndex),
-      tag: 'must-keep',
-      latestDate: '',
-      earliestDate: '',
-      type: 'other'
-    };
-  }
-  if (formDraft.deadline < firstDate || formDraft.deadline > lastDate) {
-    formDraft.deadline = defaultDeadlineDate(state.days, state.weekIndex);
-  }
-  return formDraft;
-}
-
-export function resetCheckFormDraft(state) {
-  formDraft = null;
-  if (state) getFormDraft(state);
-}
-
-/**
- * Maps an engine validation error message to the corresponding Commitment Check form field name.
- */
-export function mapProposalErrorToField(message, fields = null) {
-  const text = String(message ?? '');
-  if (/^Name\b|ID and title/i.test(text)) return 'title';
-  if (/^Typical hours\b/i.test(text)) return 'likely';
-  if (/duration range|minimum ≤ typical ≤ maximum|half-hour duration increments/i.test(text)) {
-    if (fields) {
-      const hasMin = fields.min !== '' && fields.min !== null && fields.min !== undefined;
-      const hasMax = fields.max !== '' && fields.max !== null && fields.max !== undefined;
-      if (!hasMin && hasMax) return 'max';
-      if (hasMax && !isHalfHour(Number(fields.max)) && (!hasMin || isHalfHour(Number(fields.min)))) {
-        return 'max';
-      }
-      if (hasMax && Number(fields.max) < Number(fields.likely) && !(hasMin && Number(fields.min) > Number(fields.likely))) {
-        return 'max';
-      }
-    }
-    return 'min';
-  }
-  if (/^Latest acceptable date\b/i.test(text)) return 'latestDate';
-  if (/^Earliest start\b|earliest start/i.test(text)) return 'earliestDate';
-  if (/^Deadline\b|target\/hard deadline/i.test(text)) return 'deadline';
-  if (/priority tag|Invalid priority/i.test(text)) return 'tag';
-  if (/task type/i.test(text)) return 'type';
-  return 'title';
-}
-
-/**
- * Computes the optional F3 learned estimate suggestion for a task type and entered typical hours.
- * Never mutates the student's entered value.
- */
-export function describeEstimateSuggestion(profiles = [], type = 'other', typicalHours) {
-  const profile = profiles.find(item => item.type === type) ?? { type, samples: 0, ratio: 1 };
-  const labels = TASK_TYPE_LABELS[type] ?? TASK_TYPE_LABELS.other;
-
-  if (profile.samples > 0 && profile.samples < 3) {
-    return {
-      status: 'learning',
-      samples: profile.samples,
-      ratio: profile.ratio,
-      suggestedHours: null,
-      text: `Estimate learning (${labels.label}): learning (${profile.samples} of 3 completed tasks logged).`
-    };
-  }
-
-  const parsedHours = Number(typicalHours);
-  if (profile.samples >= 3 && isHalfHour(parsedHours) && parsedHours >= 0.5) {
-    const suggestedHours = getEstimateSuggestion(profile, parsedHours);
-    if (suggestedHours !== null) {
-      const displayRatio = Number(profile.ratio.toFixed(1));
-      const exactRatio = Number(profile.ratio.toFixed(3));
-      const ratioText = displayRatio === exactRatio
-        ? `${displayRatio}×`
-        : `${displayRatio}× (${exactRatio}×)`;
-      return {
-        status: 'ready',
-        samples: profile.samples,
-        ratio: profile.ratio,
-        suggestedHours,
-        text: `You said ${fmtHours(parsedHours)}. Your last ${profile.samples} ${labels.plural} took ${ratioText} your estimate. Use ${fmtHours(suggestedHours)}?`
-      };
-    }
-  }
-
-  return {
-    status: 'none',
-    samples: profile.samples,
-    ratio: profile.ratio,
-    suggestedHours: null,
-    text: ''
-  };
-}
 
 /**
  * Purely summarizes the 7 required decision points comparing the plan without and with draft proposals.
@@ -218,690 +115,788 @@ export function buildCommitmentSummary(beforeOutcome, afterOutcome, proposals, d
   };
 }
 
-function renderOutcomeCard({ title, badgeText, beforeOutcome, afterOutcome, proposals, state, dispatch }) {
-  const summary = buildCommitmentSummary(beforeOutcome, afterOutcome, proposals, state.days);
-  const beforeCls = verdictClass(summary.beforeVerdict);
-  const afterCls = verdictClass(summary.afterVerdict);
-  const proposalIds = proposals.map(task => task.id);
-  const canPlainAccept = afterOutcome.evaluation.typical.feasible;
-  const selfServe = summary.selfServeRepair;
-  const top = summary.topRepair;
-  const isMulti = proposals.length > 1;
 
-  const proposalMetaList = proposals.map(task => {
-    const tag = taskTag(task);
-    const targetDate = state.days[task.targetDay]?.date ?? '';
-    const hardDate = state.days[task.hardDay]?.date ?? '';
-    const earliestDate = state.days[task.earliestDay]?.date ?? '';
-    const typeLabel = (TASK_TYPE_LABELS[task.type] ?? TASK_TYPE_LABELS.other).label;
-    const deadlineDetail = task.hardDay > task.targetDay
-      ? `${fmtShortWeekday(targetDate)} ${fmtShortDate(targetDate)} (${targetDate}) target · flexible up to ${fmtShortWeekday(hardDate)} ${fmtShortDate(hardDate)} (${hardDate})`
-      : `${fmtShortWeekday(targetDate)} ${fmtShortDate(targetDate)} (${targetDate})`;
-    return h('li', { className: 'proposal-meta-item' },
-      h('div', {},
-        h('strong', {}, task.title),
-        ' · ',
-        h('span', {}, `${fmtHours(task.likely)} typical (${fmtHours(task.min)}–${fmtHours(task.max)} range)`),
-        ' · ',
-        h('span', {}, `Due ${deadlineDetail}`),
-        earliestDate && task.earliestDay > 0 ? h('span', {}, ` · Starts ${earliestDate}`) : null,
-        h('span', {}, ` · Type: ${typeLabel}`)
-      ),
-      h('span', { className: `task-pill ${tag}` }, taskTagLabel(tag))
-    );
-  });
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
 
-  const repairSection = afterOutcome.evaluation.verdict === 'feasible'
-    ? h('div', { className: 'check-repair-box good' },
-        h('strong', {}, '✓ No schedule repair required: '),
-        'Every deadline is met even if tasks run long, with at least 1h of conservative buffer.'
-      )
-    : top
-      ? h('div', { className: `check-repair-box ${top.needsApproval ? 'risk' : 'good'}` },
-          h('div', { className: 'check-repair-head' },
-            h('strong', {}, 'Top verified repair recommendation'),
-            h('span', { className: `repair-status ${top.needsApproval ? 'pending' : 'self-serve'}` },
-              top.needsApproval ? 'Needs approval (pending)' : 'Self-serve'
-            )
-          ),
-          h('p', { className: 'check-repair-title' },
-            `${top.actions.map(action => action.label).join(' + ')} → ${verdictIcon(top.test.verdict)} ${verdictLabel(top.test.verdict)}`
-          ),
-          h('p', { className: 'helper' }, top.actions.map(action => action.description).join(' ')),
-          top.needsApproval
-            ? h('div', { className: 'approval-guard-note' },
-                h('p', { className: 'tiny-note' },
-                  'Guardrail: This top repair requires external approval and will never be auto-applied. You can preview its request draft below or manage approvals in Make It Work after deciding.'
-                ),
-                h('pre', { className: 'draft-box' }, draftApprovalRequest(top, state.days))
-              )
-            : null,
-          selfServe && selfServe.id !== top.id
-            ? h('p', { className: 'tiny-note' },
-                `Self-serve alternative available for one-click acceptance: ${selfServe.actions.map(action => action.label).join(' + ')} (Result: ${verdictLabel(selfServe.test.verdict)}).`
-              )
-            : null
-        )
-      : h('div', { className: 'check-repair-box alert' },
-          h('strong', {}, '✕ No verified repair available: '),
-          "No verified fix with the changes you've allowed. This is a capacity problem, not a scheduling problem."
-        );
+function announce(text) {
+  const node = document.getElementById('sr-announcer');
+  if (!node) return;
+  node.textContent = '';
+  setTimeout(() => { node.textContent = text; }, 60);
+}
 
-  const selfServeButtonLabel = selfServe
-    ? `Accept${isMulti ? ' all' : ''} with suggested change (${selfServe.actions.map(action => action.label).join(' + ')})`
-    : `Accept${isMulti ? ' all' : ''} with suggested change (none available)`;
-
-  return h('article', { className: 'panel proposal-outcome-card' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('span', { className: 'panel-label' }, badgeText),
-        h('h3', {}, title)
-      ),
-      h('span', { className: `verdict-badge ${afterCls}` },
-        `With commitment: ${verdictIcon(summary.afterVerdict)} ${verdictLabel(summary.afterVerdict).toUpperCase()}`
-      )
-    ),
-
-    h('ul', { className: 'proposal-meta-list' }, proposalMetaList),
-
-    // 1 & 2. Side-by-side Without vs With Feasibility Verdicts
-    h('div', { className: 'before-after-grid' },
-      h('div', { className: `before-after-box ${beforeCls}` },
-        h('div', { className: 'verdict-top' },
-          h('span', {}, '1 · WITHOUT THIS COMMITMENT'),
-          h('span', { className: `verdict-badge ${beforeCls}` },
-            `${verdictIcon(summary.beforeVerdict)} ${verdictLabel(summary.beforeVerdict).toUpperCase()}`
-          )
-        ),
-        h('strong', { className: 'ba-headline' }, buildVerdictCopy(beforeOutcome.evaluation, state.days).headline),
-        h('p', {}, summary.withoutLine)
-      ),
-      h('div', { className: `before-after-box ${afterCls}` },
-        h('div', { className: 'verdict-top' },
-          h('span', {}, '2 · WITH THIS COMMITMENT'),
-          h('span', { className: `verdict-badge ${afterCls}` },
-            `${verdictIcon(summary.afterVerdict)} ${verdictLabel(summary.afterVerdict).toUpperCase()}`
-          )
-        ),
-        h('strong', { className: 'ba-headline' }, buildVerdictCopy(afterOutcome.evaluation, state.days).headline),
-        h('p', {}, summary.withLine)
-      )
-    ),
-
-    // 3, 4, 5, 6. Key Numbers Breakdown Grid
-    h('div', { className: 'impact-metrics-grid' },
-      h('div', { className: 'preview-fact' },
-        h('span', {}, '3 · Additional workload'),
-        h('strong', {}, `+${fmtHours(summary.addedLikely)} typical`),
-        h('small', {}, `Range: ${fmtHours(summary.addedMin)}–${fmtHours(summary.addedMax)}`)
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, '4 · Binding deadline'),
-        h('strong', {}, summary.bindingWeekday ? `${summary.bindingWeekday} (${fmtShortDate(summary.bindingDate)})` : 'None'),
-        h('small', {}, summary.bindingDate || 'No deadlines')
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, '5 · Required vs. available'),
-        h('strong', {}, `${fmtHours(summary.requiredHours)} due / ${fmtHours(summary.availableHours)} free`),
-        h('small', {}, summary.bindingWeekday ? `Cumulative through ${summary.bindingWeekday}` : 'Cumulative')
-      ),
-      h('div', { className: 'preview-fact' },
-        h('span', {}, '6 · Shortfall / margin'),
-        h('strong', { className: summary.shortfallHours > 0 ? 'not-ok' : 'ok' },
-          summary.shortfallHours > 0
-            ? `−${fmtHours(summary.shortfallHours)} short`
-            : `${fmtSignedHours(summary.marginHours)} spare`
-        ),
-        h('small', {}, `Conservative: ${fmtSignedHours(summary.conservativeMarginHours)}`)
-      )
-    ),
-
-    // Plain-language Cost Statement (SPEC section 7.1)
-    h('div', { className: 'cost-statement-box' },
-      h('span', { className: 'field-eyebrow' }, 'PLAIN-LANGUAGE COST STATEMENT'),
-      h('p', {}, h('strong', {}, 'Without this: '), summary.withoutLine),
-      h('p', {}, h('strong', {}, 'With this: '), summary.withLine),
-      summary.tasksDueLine ? h('p', {}, summary.tasksDueLine) : null,
-      h('p', {}, summary.topRepairLine)
-    ),
-
-    // 7. Top Verified Repair Recommendation
-    repairSection,
-
-    // Four Decision Actions
-    h('div', { className: 'decision-actions' },
-      h('button', {
-        type: 'button',
-        className: 'button button-primary',
-        disabled: !canPlainAccept,
-        title: canPlainAccept
-          ? 'Add this commitment directly to your schedule'
-          : 'Typical estimates miss a deadline; use "Accept with suggested change" or "Accept anyway"',
-        onClick: () => dispatch({
-          type: 'ACCEPT_PROPOSAL',
-          proposalIds,
-          mode: 'accept'
-        })
-      }, isMulti ? 'Accept all' : 'Accept'),
-
-      h('button', {
-        type: 'button',
-        className: 'button button-secondary',
-        disabled: !selfServe,
-        onClick: () => dispatch({
-          type: 'ACCEPT_PROPOSAL',
-          proposalIds,
-          mode: 'accept-repair',
-          repairId: selfServe?.id
-        })
-      }, selfServeButtonLabel),
-
-      h('button', {
-        type: 'button',
-        className: 'button button-outline',
-        onClick: () => dispatch({
-          type: 'ACCEPT_PROPOSAL',
-          proposalIds,
-          mode: 'override'
-        })
-      }, isMulti ? 'Accept all anyway' : 'Accept anyway'),
-
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({
-          type: 'DISCARD_PROPOSAL',
-          proposalIds
-        })
-      }, isMulti ? 'Not now (discard all)' : 'Not now')
-    ),
-    !canPlainAccept
-      ? h('p', { className: 'tiny-note' },
-          'Note: "Accept" is disabled when typical estimates miss a deadline. You may apply the verified self-serve change above, or choose "Accept anyway" (which leaves the unresolved conflict visible on My Week without touching protected sleep).'
-        )
-      : null
+/** One opt-in line from the existing estimate-learning API, so the student needn't open Past estimates. */
+function renderLearnedLine({ proposal, derived, state, dispatch }) {
+  const ui = getUi(proposal.id);
+  if (ui.learnedUsed) return null; // one offer per request: accepting it must not trigger a second bump
+  const type = effectiveTaskType(proposal.type, proposal.title);
+  const info = describeEstimateSuggestion(derived.estimateProfiles, type, proposal.likely);
+  if (info.status !== 'ready' || info.suggestedHours === proposal.likely) return null;
+  return h('div', { id: 'estimate-line', className: 'learned-line', role: 'status' },
+    h('span', {}, info.text),
+    h('button', {
+      type: 'button', id: 'use-learned', className: 'learned-btn',
+      onClick: () => {
+        const fields = draftFromProposal(proposal, state);
+        session.pendingFocus = true;
+        ui.learnedUsed = true;
+        try {
+          dispatch({
+            type: 'UPDATE_PROPOSAL',
+            proposalId: proposal.id,
+            fields: { ...fields, type, likely: String(info.suggestedHours) }
+          }, { rethrow: true });
+        } catch {
+          session.pendingFocus = false;
+          ui.learnedUsed = false;
+        }
+      }
+    }, `Use ${fmtHours(info.suggestedHours)}`)
   );
 }
 
-/**
- * Renders Screen 2: Should I Say Yes? (F1 Commitment Check).
- */
-export function renderCheckScreen(container, { state, derived, dispatch }) {
-  const draft = getFormDraft(state);
-  const firstDate = state.days[0]?.date ?? '';
-  const lastDate = state.days[state.days.length - 1]?.date ?? '';
-  const copy = buildVerdictCopy(derived.evaluation, state.days);
-  const verdictCls = verdictClass(derived.evaluation.verdict);
-
-  const headerBar = h('section', { className: 'panel check-header' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('div', { className: 'panel-label' },
-          h('span', { className: 'panel-index' }, '02'),
-          'COMMITMENT CHECK · SHOULD I SAY YES?'
-        ),
-        h('h2', {}, 'Know what your next yes will cost.'),
-        h('p', { className: 'helper' },
-          'Enter a potential commitment in under ten seconds. Nothing joins your schedule until you choose an acceptance option.'
-        )
-      ),
-      h('span', { className: `verdict-badge ${verdictCls}` },
-        `Current plan: ${verdictIcon(derived.evaluation.verdict)} ${verdictLabel(derived.evaluation.verdict).toUpperCase()}`
-      )
-    ),
-    h('div', { className: 'rescue-summary-line' },
-      h('strong', {}, 'Current baseline plan: '),
-      `${copy.headline} ${copy.body}`
-    ),
-    h('div', { className: 'quick-actions' },
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'week' })
-      }, '← Back to My Week'),
-      h('button', {
-        type: 'button',
-        className: 'button button-quiet',
-        onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-      }, 'Open Make It Work'),
-      state.demo
-        ? h('button', {
-            type: 'button',
-            className: 'button button-outline',
-            onClick: () => dispatch({
-              type: 'UPDATE_DEMO_RESEARCH',
-              includeResearch: !state.includeResearch,
-              researchHours: state.researchHours
-            })
-          }, state.includeResearch
-            ? 'Exclude built-in 5h demo research (start from 13h feasible week)'
-            : 'Re-include built-in 5h demo research')
-        : null
-    )
-  );
-
-  const unresolvedBanner = state.unresolvedConflict && !derived.evaluation.typical.feasible
-    ? h('div', { className: 'banner banner-alert', role: 'status' },
-        h('div', { className: 'banner-body' },
-          h('strong', {}, 'Unresolved deadline conflict on your plan: '),
-          'You previously accepted an infeasible commitment with "Accept anyway". The conflict remains visible until resolved.'
-        ),
-        h('button', {
-          type: 'button',
-          className: 'button button-outline button-sm',
-          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
-        }, 'Resolve in Make It Work')
-      )
-    : null;
-
-  const suggestionBox = h('div', { id: 'estimate-suggestion', className: 'suggestion-slot' });
-  const rangePreview = h('small', { id: 'range-preview', className: 'field-hint' });
-  const latestGroup = h('div', {
-    id: 'latest-date-group',
-    className: 'form-field',
-    hidden: draft.tag !== 'flexible'
-  });
-  const formErrorBanner = h('p', {
-    id: 'proposal-error',
-    className: 'form-error-banner',
-    role: 'alert',
-    hidden: true
-  });
-
-  const fieldErrorNodes = {};
-  const inputNodes = {};
-
-  function makeFieldError(name) {
-    const node = h('small', {
-      id: `error-${name}`,
-      className: 'field-error',
-      role: 'alert',
-      hidden: true
-    });
-    fieldErrorNodes[name] = node;
-    return node;
-  }
-
-  function clearErrors() {
-    formErrorBanner.textContent = '';
-    formErrorBanner.hidden = true;
-    for (const [name, errNode] of Object.entries(fieldErrorNodes)) {
-      errNode.textContent = '';
-      errNode.hidden = true;
-      const input = inputNodes[name];
-      if (input) {
-        input.removeAttribute('aria-invalid');
-        input.removeAttribute('aria-describedby');
-      }
-    }
-  }
-
-  function showValidationError(message, submittedFields = null) {
-    clearErrors();
-    const fieldName = mapProposalErrorToField(message, submittedFields);
-    const errNode = fieldErrorNodes[fieldName];
-    const input = inputNodes[fieldName];
-    if (errNode) {
-      errNode.textContent = message;
-      errNode.hidden = false;
-    }
-    if (input) {
-      input.setAttribute('aria-invalid', 'true');
-      if (errNode) input.setAttribute('aria-describedby', errNode.id);
-    }
-    formErrorBanner.textContent = message;
-    formErrorBanner.hidden = false;
-  }
-
-  function updateDynamicHelpers() {
-    const likelyNum = Number(draft.likely);
-    if (isHalfHour(likelyNum) && likelyNum >= 0.5 && likelyNum <= 40) {
-      const range = defaultRange(likelyNum);
-      rangePreview.textContent = `Leave min/max blank to use D3 default range: ${fmtHours(range.min)} – ${fmtHours(range.max)} (0.8× to 1.4× typical, rounded to 0.5h).`;
-    } else {
-      rangePreview.textContent = 'Optional. Leave blank to auto-fill 0.8× (min, at least 0.5h) and 1.4× (max) rounded to 0.5h.';
-    }
-
-    const flexible = draft.tag === 'flexible';
-    latestGroup.hidden = !flexible;
-    if (!flexible) {
-      draft.latestDate = '';
-      if (inputNodes.latestDate) inputNodes.latestDate.value = '';
-    }
-
-    const info = describeEstimateSuggestion(derived.estimateProfiles, draft.type, draft.likely);
-    if (info.status === 'ready' && info.suggestedHours !== likelyNum) {
-      suggestionBox.replaceChildren(
-        h('div', { className: 'estimate-suggestion-banner', role: 'status' },
-          h('span', {}, info.text),
-          h('button', {
-            type: 'button',
-            className: 'button button-secondary button-sm',
-            onClick: () => {
-              draft.likely = String(info.suggestedHours);
-              if (inputNodes.likely) inputNodes.likely.value = draft.likely;
-              updateDynamicHelpers();
-            }
-          }, `Use ${fmtHours(info.suggestedHours)}`)
-        )
-      );
-    } else if (info.status === 'learning') {
-      suggestionBox.replaceChildren(
-        h('p', { className: 'field-hint learning-note' }, info.text)
-      );
-    } else {
-      suggestionBox.replaceChildren();
-    }
-  }
-
-  inputNodes.title = h('input', {
-    id: 'proposal-title',
-    name: 'title',
-    type: 'text',
-    maxlength: '80',
-    required: true,
-    value: draft.title,
-    placeholder: 'e.g. Robotics Club Perception Module',
-    onInput: ev => {
-      draft.title = ev.currentTarget.value;
-      clearErrors();
-    }
-  });
-
-  inputNodes.likely = h('input', {
-    id: 'proposal-likely',
-    name: 'likely',
-    type: 'number',
-    min: '0.5',
-    max: '40',
-    step: '0.5',
-    required: true,
-    value: draft.likely,
-    placeholder: 'e.g. 5',
-    onInput: ev => {
-      draft.likely = ev.currentTarget.value;
-      clearErrors();
-      updateDynamicHelpers();
-    }
-  });
-
-  inputNodes.min = h('input', {
-    id: 'proposal-min',
-    name: 'min',
-    type: 'number',
-    min: '0',
-    max: '40',
-    step: '0.5',
-    value: draft.min,
-    placeholder: 'Auto (0.8×)',
-    onInput: ev => {
-      draft.min = ev.currentTarget.value;
-      clearErrors();
-    }
-  });
-
-  inputNodes.max = h('input', {
-    id: 'proposal-max',
-    name: 'max',
-    type: 'number',
-    min: '0',
-    max: '60',
-    step: '0.5',
-    value: draft.max,
-    placeholder: 'Auto (1.4×)',
-    onInput: ev => {
-      draft.max = ev.currentTarget.value;
-      clearErrors();
-    }
-  });
-
-  inputNodes.deadline = h('input', {
-    id: 'proposal-deadline',
-    name: 'deadline',
-    type: 'date',
-    min: firstDate,
-    max: lastDate,
-    required: true,
-    value: draft.deadline,
-    onInput: ev => {
-      draft.deadline = ev.currentTarget.value;
-      clearErrors();
-    }
-  });
-
-  inputNodes.tag = h('select', {
-    id: 'proposal-tag',
-    name: 'tag',
-    onChange: ev => {
-      draft.tag = ev.currentTarget.value;
-      clearErrors();
-      updateDynamicHelpers();
+function renderRequestSummary({ proposal, state, rerender }) {
+  const dueDate = state.days[proposal.targetDay]?.date;
+  const summary = `${proposal.title} · ${fmtHours(proposal.likely)} · ${dueDate ? weekdayNameOf(dueDate) : ''}`;
+  return h('button', {
+    type: 'button', id: 'edit-request', className: 'request-summary',
+    'aria-label': `${summary}. Edit`,
+    onClick: () => {
+      session.editing = true;
+      session.formDraft = null;
+      rerender();
+      document.getElementById('proposal-title')?.focus();
     }
   },
-    h('option', { value: 'must-keep', selected: draft.tag === 'must-keep' }, 'must-keep — Must-keep (priority 1, fixed target)'),
-    h('option', { value: 'flexible', selected: draft.tag === 'flexible' }, 'flexible — Flexible (soft target can move to latest date)'),
-    h('option', { value: 'droppable', selected: draft.tag === 'droppable' }, 'droppable — Droppable (optional commitment)')
+    h('span', { className: 'summary-icon', 'aria-hidden': 'true' },
+      svg('svg', { width: '18', height: '18', viewBox: '0 0 18 18', fill: 'none' },
+        svg('path', { d: 'M4 3h8l3 3v9H4z', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linejoin': 'round' }),
+        svg('path', { d: 'M7 9h5M7 12h5', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round' }))),
+    h('span', { className: 'summary-text' }, summary),
+    h('span', { className: 'summary-edit', 'aria-hidden': 'true' }, 'Edit')
   );
+}
 
-  inputNodes.latestDate = h('input', {
-    id: 'proposal-latest',
-    name: 'latestDate',
-    type: 'date',
-    min: firstDate,
-    max: lastDate,
-    value: draft.latestDate,
-    onInput: ev => {
-      draft.latestDate = ev.currentTarget.value;
-      clearErrors();
-    }
-  });
+const VERDICT_WORDS = { fits: 'Fits', tight: 'Tight', short: "Doesn't fit" };
 
-  inputNodes.earliestDate = h('input', {
-    id: 'proposal-earliest',
-    name: 'earliestDate',
-    type: 'date',
-    min: firstDate,
-    max: lastDate,
-    value: draft.earliestDate,
-    onInput: ev => {
-      draft.earliestDate = ev.currentTarget.value;
-      clearErrors();
-    }
-  });
-
-  inputNodes.type = h('select', {
-    id: 'proposal-type',
-    name: 'type',
-    onChange: ev => {
-      draft.type = ev.currentTarget.value;
-      clearErrors();
-      updateDynamicHelpers();
-    }
+function renderVerdict({ analysis, state, animate }) {
+  const baselineNote = analysis.baselineBroken && analysis.kind === 'short'
+    ? 'Your week already had a gap before this, so the numbers above show both.'
+    : '';
+  return h('section', {
+    id: 'check-verdict',
+    className: `vhero vhero-${analysis.kind}${animate ? ' rise' : ''}`,
+    'aria-labelledby': 'verdict-headline'
   },
-    TASK_TYPES.map(typeKey =>
-      h('option', { value: typeKey, selected: draft.type === typeKey },
-        `${typeKey} — ${(TASK_TYPE_LABELS[typeKey] ?? TASK_TYPE_LABELS.other).label}`
+    h('div', { className: 'eyebrow vhero-eyebrow' }, analysis.eyebrow),
+    h('h1', { id: 'verdict-headline', className: 'vhero-title', tabindex: '-1', role: 'status' }, analysis.bigWord),
+    h('p', { id: 'verdict-lead', className: 'vhero-lead' }, analysis.lead),
+    analysis.detail ? h('p', { className: 'vhero-detail' }, analysis.detail) : null,
+    baselineNote ? h('p', { className: 'vhero-detail' }, baselineNote) : null,
+    analysis.kind === 'short' && analysis.option && analysis.afterClause?.kind === 'hours' && analysis.afterClause.hours >= 2
+      ? h('p', { className: 'aside-line' }, 'That would need the 25th hour. Here is one way to get some time back.')
+      : null,
+    analysis.kind === 'fits'
+      ? null
+      : h('p', { className: 'vhero-sleep' }, `Sleep stays protected (${state.sleep.start}–${state.sleep.end}) in every number here.`)
+  );
+}
+
+const oneDecimal = value => Math.round(value * 10) / 10;
+
+/** Needed versus free, from the engine run: green is what fits, coral is the shortfall. */
+export function renderBar({ analysis, animate }) {
+  const bar = analysis.bar;
+  if (!bar) return null;
+  const scale = Math.max(bar.need, bar.free, 0.5);
+  const pct = value => `${Math.round((value / scale) * 1000) / 10}%`;
+  const label = bar.short > 0
+    ? `${hoursPhrase(bar.need)} needed, ${hoursPhrase(bar.free)} free before ${bar.dayName}, ${hoursPhrase(bar.short)} short.`
+    : `${hoursPhrase(bar.need)} needed, ${hoursPhrase(bar.free)} free before ${bar.dayName}. It fits.`;
+  return h('section', { id: 'fit-bar', className: `fitbar${animate ? ' rise' : ''}`, role: 'img', 'aria-label': label },
+    h('div', { className: 'fitbar-head' },
+      h('span', {}, bar.fromNow ? `Time from now until ${bar.dayName}` : `Time before ${bar.dayName}`),
+      h('span', {}, `${hoursPhrase(bar.free)} free`)),
+    h('div', { className: 'fitbar-track-wrap' },
+      h('div', { className: 'fitbar-track' },
+        h('div', { className: `fitbar-ok${animate ? ' grow' : ''}`, style: `width:${pct(bar.ok)}` }),
+        bar.short > 0 ? h('div', { className: `fitbar-short${animate ? ' grow' : ''}`, style: `width:${pct(bar.short)}` }) : null),
+      h('div', { className: 'fitbar-cap', 'aria-hidden': 'true', style: `left:${pct(bar.free)}` })),
+    h('div', { className: 'legend-row', 'aria-hidden': 'true' },
+      h('span', {}, h('i', { className: 'swatch sage' }), `Fits: ${hoursPhrase(bar.ok)}`),
+      bar.short > 0 ? h('span', {}, h('i', { className: 'swatch coral' }), `Short: ${hoursPhrase(bar.short)}`) : null,
+      h('span', {}, h('i', { className: 'swatch marker' }), 'Your free time ends here'))
+  );
+}
+
+function renderOption({ analysis, state, dispatch, animate }) {
+  if (analysis.kind === 'fits') return null;
+  if (!analysis.option) {
+    if (analysis.kind === 'tight') return null;
+    return h('section', { id: 'check-option', className: `option-card option-none${animate ? ' rise' : ''}` },
+      h('div', { className: 'eyebrow option-eyebrow' }, 'Verified option'),
+      h('h2', { className: 'option-title' }, 'No change makes this fit.'),
+      h('p', { className: 'option-body' }, analysis.noOptionText)
+    );
+  }
+  const option = analysis.option;
+  const resultText = option.spareHours !== null
+    ? `With that change it fits. Your tightest day, ${dayLabel(option.spareDate)}, still has ${hoursPhrase(option.spareHours)} to spare, and your sleep stays untouched.`
+    : 'With that change it fits, and your sleep stays untouched.';
+  return h('section', { id: 'check-option', className: `option-card${option.needsApproval ? ' option-approval' : ''}${animate ? ' rise' : ''}` },
+    h('div', { className: 'option-head' },
+      h('div', { className: 'eyebrow option-eyebrow' }, analysis.kind === 'tight' ? 'If you want more room' : 'One verified option'),
+      h('span', { className: `option-tag ${option.needsApproval ? 'needs-approval' : 'self-serve'}` },
+        option.needsApproval ? 'If approved' : 'You can do this yourself')),
+    h('h2', { className: 'option-title' }, `${option.label}.`),
+    h('p', { className: 'option-body' },
+      resultText,
+      option.needsApproval ? ' Someone else has to say yes first.' : ''),
+    analysis.alternative
+      ? h('p', { className: 'option-note' }, `A change you can make yourself: ${analysis.alternative.label}.`)
+      : null,
+    h('button', {
+      type: 'button', id: 'other-ways', className: 'link-button',
+      onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
+    }, 'Other ways to make room')
+  );
+}
+
+function renderEstimateRange(analysis, after, state) {
+  if (!analysis.range) return null;
+  const levels = [
+    ['optimistic', 'If everything goes quickly'],
+    ['typical', 'As estimated'],
+    ['conservative', 'If everything runs long']
+  ];
+  return h('section', { id: 'estimate-range', className: 'range-block' },
+    h('p', { id: 'range-sentence', className: 'range-sentence' }, analysis.range.sentence),
+    h('p', { className: 'option-note' }, 'Your other commitments are held at their usual estimates in this comparison.'),
+    h('details', { className: 'quiet-details', id: 'all-estimates' },
+      h('summary', {}, 'Compare all three estimates'),
+      h('p', { className: 'helper' }, 'Here every commitment runs quick, as estimated, or long together.'),
+      h('ul', { className: 'estimate-list' },
+        levels.map(([key, label]) => {
+          const schedule = after.evaluation[key];
+          const cost = deadlineCost(schedule, state.days);
+          const detail = cost
+            ? `${dayLabel(cost.date)}: ${cost.marginHours < 0 ? `${hoursPhrase(-cost.marginHours)} short` : `${hoursPhrase(cost.marginHours)} to spare`}`
+            : 'Nothing due';
+          return h('li', {},
+            h('strong', {}, label),
+            ` — ${schedule.feasible ? 'fits' : "doesn't fit"}. ${detail}.`);
+        })
       )
     )
   );
+}
 
-  latestGroup.replaceChildren(
-    h('label', { for: 'proposal-latest' }, 'Latest acceptable date (hard deadline, optional)'),
-    inputNodes.latestDate,
-    h('small', { className: 'field-hint' },
-      'If left blank for a flexible commitment, defaults to deadline + 1 day (capped at the last loaded day).'
-    ),
-    makeFieldError('latestDate')
-  );
+function renderSmallerOffer({ analysis, proposal, state, ui, dispatch, rerender }) {
+  const active = ui.smaller && ui.smaller.active;
+  if (!active && analysis.kind !== 'short') return null;
+  if (!active && proposal.likely <= 0.5) return null;
 
-  updateDynamicHelpers();
+  const statusLine = active
+    ? (analysis.fits
+        ? `The smaller version (${hoursPhrase(proposal.likely)}) fits. The full request (${hoursPhrase(ui.smaller.fullHours)}) didn't.`
+        : `Even the smaller version (${hoursPhrase(proposal.likely)}) doesn't fit.`)
+    : '';
 
-  const formPanel = h('section', { className: 'panel check-form-panel' },
-    h('div', { className: 'panel-title-line' },
-      h('div', {},
-        h('span', { className: 'panel-label' }, 'NEW COMMITMENT PROPOSAL'),
-        h('h3', {}, 'Should I say yes to this?')
-      ),
-      h('span', { className: 'pill' }, `Loaded dates: ${firstDate} to ${lastDate}`)
-    ),
+  const scopeInput = h('input', {
+    id: 'smaller-scope', name: 'scope', type: 'text', maxlength: '120', autocomplete: 'off',
+    value: ui.smaller?.scope ?? '',
+    placeholder: 'e.g. just the first draft'
+  });
+  const hoursInput = h('input', {
+    id: 'smaller-hours', name: 'hours', type: 'number', inputmode: 'decimal', min: '0.5', step: '0.5',
+    value: active ? String(proposal.likely) : '', placeholder: 'e.g. 2'
+  });
+  const error = h('p', { id: 'smaller-error', className: 'field-error', role: 'alert', hidden: true });
+
+  return h('section', { id: 'smaller-offer', className: 'smaller-offer' },
+    h('p', { className: 'eyebrow' }, 'Could you offer less?'),
+    active ? h('p', { id: 'smaller-status', className: 'smaller-status', role: 'status' }, statusLine) : null,
     h('form', {
-      id: 'proposal-form',
-      className: 'commitment-form',
+      id: 'smaller-form',
       novalidate: true,
       onSubmit: ev => {
         ev.preventDefault();
-        clearErrors();
-        const fields = {
-          title: inputNodes.title.value,
-          likely: inputNodes.likely.value,
-          min: inputNodes.min.value,
-          max: inputNodes.max.value,
-          deadline: inputNodes.deadline.value,
-          tag: inputNodes.tag.value,
-          latestDate: inputNodes.tag.value === 'flexible' ? inputNodes.latestDate.value : inputNodes.latestDate.value,
-          earliestDate: inputNodes.earliestDate.value,
-          type: inputNodes.type.value
+        error.hidden = true;
+        const fullHours = active ? ui.smaller.fullHours : proposal.likely;
+        const fullFields = active ? ui.smaller.fullFields : null;
+        const hours = Number(hoursInput.value);
+        if (!isHalfHour(hours) || hours < 0.5) {
+          error.textContent = 'Enter the hours in half-hour steps, such as 1.5 or 2.';
+          error.hidden = false;
+          return;
+        }
+        if (hours >= fullHours) {
+          error.textContent = `A smaller version needs fewer than ${hoursPhrase(fullHours)}.`;
+          error.hidden = false;
+          return;
+        }
+        const base = fullFields ?? draftFromProposal(proposal, state);
+        const next = {
+          active: true,
+          scope: scopeInput.value.trim(),
+          fullHours,
+          fullFields: base
         };
         try {
-          dispatch({ type: 'ADD_PROPOSAL', fields }, { rethrow: true });
-        } catch (error) {
-          showValidationError(error?.message || 'Check the entered commitment details.', fields);
+          ui.smaller = next;
+          session.pendingFocus = true;
+          dispatch({
+            type: 'UPDATE_PROPOSAL',
+            proposalId: proposal.id,
+            fields: { ...base, likely: String(hours), min: '', max: '' }
+          }, { rethrow: true });
+        } catch (failure) {
+          session.pendingFocus = false;
+          ui.smaller = active ? ui.smaller : null;
+          error.textContent = failure?.message || 'Could not check that smaller version.';
+          error.hidden = false;
         }
       }
     },
       h('div', { className: 'form-grid-two' },
         h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-title' }, 'Commitment name *'),
-          inputNodes.title,
-          h('small', { className: 'field-hint' }, 'Required, 1 to 80 characters.'),
-          makeFieldError('title')
+          h('label', { for: 'smaller-scope' }, 'What would you do instead?'),
+          scopeInput
         ),
         h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-likely' }, 'Typical hours needed *'),
-          inputNodes.likely,
-          h('small', { className: 'field-hint' }, 'Required, 0.5 to 40h in half-hour steps (0.5, 1, 1.5, …).'),
-          makeFieldError('likely'),
-          suggestionBox
+          h('label', { for: 'smaller-hours' }, 'Estimated hours for that'),
+          hoursInput
         )
       ),
-
-      h('div', { className: 'form-grid-two' },
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-min' }, 'Optimistic (minimum) hours (optional)'),
-          inputNodes.min,
-          makeFieldError('min')
-        ),
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-max' }, 'Conservative (maximum) hours (optional)'),
-          inputNodes.max,
-          makeFieldError('max')
-        )
-      ),
-      rangePreview,
-
-      h('div', { className: 'form-grid-three' },
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-deadline' }, 'Target deadline date *'),
-          inputNodes.deadline,
-          h('small', { className: 'field-hint' }, `Must be within ${firstDate} – ${lastDate}.`),
-          makeFieldError('deadline')
-        ),
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-tag' }, 'Priority tag *'),
-          inputNodes.tag,
-          makeFieldError('tag')
-        ),
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-type' }, 'Task type (for estimate learning)'),
-          inputNodes.type,
-          makeFieldError('type')
-        )
-      ),
-
-      latestGroup,
-
-      h('div', { className: 'form-grid-two' },
-        h('div', { className: 'form-field' },
-          h('label', { for: 'proposal-earliest' }, 'Earliest start date (optional)'),
-          inputNodes.earliestDate,
-          h('small', { className: 'field-hint' }, `Defaults to first loaded day (${firstDate}).`),
-          makeFieldError('earliestDate')
-        )
-      ),
-
-      formErrorBanner,
-
+      error,
       h('div', { className: 'form-submit-row' },
-        h('button', { type: 'submit', className: 'button button-primary' }, 'Check commitment'),
-        h('button', {
-          type: 'button',
-          className: 'button button-quiet',
-          onClick: () => {
-            resetCheckFormDraft(state);
-            renderCheckScreen(container, { state, derived, dispatch });
-          }
-        }, 'Reset form')
+        h('button', { type: 'submit', className: 'button button-secondary' }, 'Check the smaller version'),
+        active
+          ? h('button', {
+              type: 'button',
+              className: 'link-button',
+              onClick: () => {
+                const fields = ui.smaller.fullFields;
+                ui.smaller = null;
+                session.pendingFocus = true;
+                try {
+                  dispatch({ type: 'UPDATE_PROPOSAL', proposalId: proposal.id, fields }, { rethrow: true });
+                } catch {
+                  session.pendingFocus = false;
+                }
+              }
+            }, 'Back to the full request')
+          : null
       )
+    ),
+    h('p', { className: 'option-note' },
+      "A smaller version only counts as fitting once the check has run on it.")
+  );
+}
+
+export function renderReplySlip({ analysis, proposal, state, ui, rerender }) {
+  const smaller = ui.smaller && ui.smaller.active ? { active: true, scope: ui.smaller.scope } : null;
+  const tabs = buildReplyTabs({ analysis, proposal, days: state.days, smaller, includeWorkload: false });
+  const tabsSignature = `${analysis.signature}|${tabs.map(tab => tab.id).join(',')}`;
+  // When the set of verified replies changes, start from the first one; otherwise keep the chosen tab.
+  const tabIds = tabs.map(tab => tab.id).join(',');
+  if (!ui.tab || ui.tabIds !== tabIds || !tabs.some(tab => tab.id === ui.tab)) ui.tab = tabs[0].id;
+  ui.tabIds = tabIds;
+  const current = tabs.find(tab => tab.id === ui.tab);
+
+  if (!ui.touched || ui.text === current.text) {
+    ui.touched = false;
+    ui.text = current.text;
+    ui.baseSignature = tabsSignature;
+  }
+  ui.autoText = current.text;
+  // Edits survive a rerun. If the verified replies changed underneath them, say so.
+  const flagged = ui.touched && tabsSignature !== ui.baseSignature;
+
+  const textarea = h('textarea', {
+    id: 'reply-text', className: 'reply-text', rows: '5', spellcheck: 'true', 'aria-describedby': 'reply-note'
+  });
+  textarea.value = ui.text;
+  const fit = () => { textarea.style.height = 'auto'; textarea.style.height = `${textarea.scrollHeight + 2}px`; };
+  textarea.addEventListener('input', () => {
+    ui.text = textarea.value;
+    ui.touched = textarea.value !== ui.autoText;
+    fit();
+  });
+  const copy = makeCopyControls(() => textarea.value);
+
+  return h('section', { id: 'reply-slip', className: 'reply-slip', 'aria-labelledby': 'reply-title' },
+    h('div', { className: 'slip-perforation', 'aria-hidden': 'true' }),
+    h('div', {},
+      h('h2', { id: 'reply-title', className: 'slip-title' }, "Here's what you could send."),
+      h('p', { id: 'reply-hint', className: 'slip-hint' }, current.hint)),
+    flagged
+      ? h('div', { id: 'reply-flag', className: 'reply-flag', role: 'status' },
+          h('strong', {}, 'Check this before sending.'),
+          ' Your week changed since this was drafted, so what it says may no longer be right. Your edits are kept.',
+          h('button', {
+            type: 'button', className: 'link-button',
+            onClick: () => { ui.baseSignature = tabsSignature; rerender(); }
+          }, "I've checked it"))
+      : null,
+    h('div', { className: 'slip-tabs', role: 'tablist', 'aria-label': 'Kind of reply' },
+      tabs.map(tab =>
+        h('button', {
+          type: 'button', role: 'tab', id: `tab-${tab.id}`, className: 'slip-tab',
+          'aria-selected': String(tab.id === ui.tab),
+          onClick: () => { ui.tab = tab.id; ui.touched = false; rerender(); }
+        }, tab.label))),
+    h('label', { for: 'reply-text', className: 'sr-only' }, 'Your reply, editable'),
+    textarea,
+    copy.button,
+    copy.status,
+    h('p', { id: 'reply-note', className: 'slip-caption' },
+      [current.note, "Copying only copies. Your week doesn't change until you say so."].filter(Boolean).join(' ')),
+    ui.touched
+      ? h('button', {
+          type: 'button', className: 'link-button center',
+          onClick: () => { ui.touched = false; rerender(); }
+        }, 'Use the suggested wording again')
+      : null
+  );
+}
+
+/** Who is waiting on an answer, switchable after the check. */
+function renderAudienceToggle({ proposal, state, dispatch }) {
+  const set = audience => {
+    if ((proposal.audience === 'self' ? 'self' : 'others') === audience) return;
+    const fields = draftFromProposal(proposal, state);
+    dispatch({ type: 'UPDATE_PROPOSAL', proposalId: proposal.id, fields: { ...fields, audience } });
+  };
+  const self = proposal.audience === 'self';
+  return h('div', { className: 'segmented', role: 'group', 'aria-label': 'Who is waiting' },
+    h('button', { type: 'button', id: 'who-others', 'aria-pressed': String(!self), onClick: () => set('others') }, 'Someone else asked'),
+    h('button', { type: 'button', id: 'who-self', 'aria-pressed': String(self), onClick: () => set('self') }, 'Just me'));
+}
+
+function renderDecisions({ analysis, proposal, after, dispatch }) {
+  const proposalIds = [proposal.id];
+  const selfServe = findSelfServeAcceptRepair(after.repairs, proposalIds);
+  const forSelf = proposal.audience === 'self';
+  const done = () => { resetRequestUi(); };
+  const add = analysis.fits
+    ? { label: 'Add it to my week', run: () => dispatch({ type: 'ACCEPT_PROPOSAL', proposalIds, mode: 'accept', thenScreen: 'week' }) }
+    : selfServe
+      ? { label: 'Add it to my week, with this change', run: () => dispatch({ type: 'ACCEPT_PROPOSAL', proposalIds, mode: 'accept-repair', repairId: selfServe.id, thenScreen: 'week' }) }
+      : null;
+  const anyway = !analysis.fits
+    ? { label: 'Say yes anyway', run: () => dispatch({ type: 'NAVIGATE', screen: 'cost' }) }
+    : null;
+  const notNow = () => dispatch({ type: 'DISCARD_PROPOSAL', proposalIds, thenScreen: 'home' });
+  const help = analysis.fits
+    ? 'Nothing is added until you choose.'
+    : analysis.option && analysis.option.needsApproval
+      ? 'Wait for their reply before adding this. It goes on your week and the gap stays visible. It never takes sleep.'
+      : 'It goes on your week and the gap stays visible. It never takes sleep.';
+
+  if (forSelf) {
+    const primary = add ?? anyway;
+    return h('section', { id: 'check-decisions', className: 'decisions decisions-self' },
+      h('p', { id: 'self-text', className: 'decision-text' },
+        analysis.fits
+          ? `Nobody to answer. It fits${analysis.afterCost ? ` with ${hoursPhrase(Math.max(0, analysis.afterCost.marginHours))} to spare` : ''}.`
+          : `Nobody to answer, so this is just between you and the numbers. ${analysis.option ? `${analysis.option.label} makes it fit. ` : ''}Without a change, ${analysis.afterClause ? `you're ${analysis.afterClause.text}` : 'it does not fit'}.`),
+      h('button', { type: 'button', className: 'button button-primary', onClick: () => { done(); primary.run(); } }, primary.label),
+      add && anyway
+        ? h('button', { type: 'button', className: 'link-button center', onClick: () => { done(); anyway.run(); } }, anyway.label)
+        : null,
+      h('button', { type: 'button', className: 'link-button center muted', onClick: () => { done(); notNow(); } }, 'Not now')
+    );
+  }
+  const links = [add, anyway].filter(Boolean).map(item =>
+    h('button', { type: 'button', className: 'link-button', onClick: () => { done(); item.run(); } }, item.label));
+  return h('section', { id: 'check-decisions', className: 'decisions' },
+    ...links,
+    h('button', { type: 'button', className: 'link-button muted', onClick: () => { done(); notNow(); } }, 'Not now'),
+    h('p', { className: 'decision-help' }, help)
+  );
+}
+
+function renderBookedDetails({ analysis, proposal, state, derived, after, dispatch }) {
+  const through = Math.max(proposal.targetDay, analysis.afterCost?.dayIndex ?? 0);
+  const info = describeBookedWeek({
+    state, derived, throughDayIndex: through, schedule: after.evaluation.typical
+  });
+  const errorBox = h('p', { id: 'busy-error', className: 'field-error', role: 'alert', hidden: true });
+  const daySelect = h('select', { id: 'busy-day', name: 'day' },
+    info.rows.map(row => h('option', { value: String(row.index) }, row.label)));
+  const startInput = h('input', { id: 'busy-start', name: 'start', type: 'time', value: '09:00', step: '1800' });
+  const endInput = h('input', { id: 'busy-end', name: 'end', type: 'time', value: '10:00', step: '1800' });
+
+  const addForm = h('form', {
+    id: 'busy-form',
+    novalidate: true,
+    onSubmit: ev => {
+      ev.preventDefault();
+      errorBox.hidden = true;
+      try {
+        session.focusSelectorAfterRender = '#busy-day';
+        dispatch({
+          type: 'ADD_BUSY_BLOCK',
+          dayIndex: Number(daySelect.value),
+          start: startInput.value,
+          end: endInput.value
+        }, { rethrow: true });
+      } catch (failure) {
+        session.focusSelectorAfterRender = null;
+        errorBox.textContent = failure?.message || 'Could not add that block.';
+        errorBox.hidden = false;
+      }
+    }
+  },
+    h('p', { className: 'eyebrow' }, 'Something missing? Add a fixed block'),
+    h('div', { className: 'form-grid-three' },
+      h('div', { className: 'form-field' }, h('label', { for: 'busy-day' }, 'Day'), daySelect),
+      h('div', { className: 'form-field' }, h('label', { for: 'busy-start' }, 'From'), startInput),
+      h('div', { className: 'form-field' }, h('label', { for: 'busy-end' }, 'To'), endInput)
+    ),
+    errorBox,
+    h('div', { className: 'form-submit-row' },
+      h('button', { type: 'submit', className: 'button button-secondary' }, 'Add block and check again'),
+      h('button', {
+        type: 'button', id: 'booked-to-week', className: 'link-button',
+        onClick: () => { openWeekBusy(); dispatch({ type: 'NAVIGATE', screen: 'week' }); }
+      }, 'Edit in My week')
     )
   );
 
-  const resultsSection = h('section', {
-    id: 'proposals-results',
-    className: 'proposals-results',
-    'aria-live': 'polite'
-  });
+  return h('details', {
+    id: 'booked-week',
+    className: 'quiet-details booked',
+    open: session.bookedOpen,
+    onToggle: ev => { session.bookedOpen = ev.currentTarget.open; }
+  },
+    h('summary', {}, 'What the check counted'),
+    h('p', { className: 'helper' },
+      `This is everything the check counted from ${dayLabel(info.rows[0]?.date)} to ${dayLabel(info.rows[info.rows.length - 1]?.date)}.`),
+    info.evidence.length
+      ? h('ul', { className: 'evidence-list' }, info.evidence.map(line => h('li', {}, line)))
+      : null,
+    h('ul', { className: 'booked-days' },
+      info.rows.map(row =>
+        h('li', { className: 'booked-day' },
+          h('strong', {}, row.label),
+          h('div', { className: 'booked-line' },
+            row.busy.length
+              ? [
+                  'Busy: ',
+                  row.busy.map(block =>
+                    h('span', { className: 'busy-chip' },
+                      `${block.start}–${block.end}`,
+                      h('button', {
+                        type: 'button',
+                        className: 'chip-remove',
+                        'aria-label': `Remove busy block ${block.start} to ${block.end} on ${row.label}`,
+                        onClick: () => {
+                          session.focusSelectorAfterRender = '#booked-week summary';
+                          dispatch({ type: 'REMOVE_BUSY_BLOCK', dayIndex: row.index, start: block.start, end: block.end });
+                        }
+                      }, 'Remove')
+                    ))
+                ]
+              : 'No busy blocks.'
+          ),
+          h('div', { className: 'booked-line' },
+            row.work.length
+              ? `Work windows: ${row.work.map(win => `${win.start}–${win.end}`).join(', ')}. `
+              : 'No work windows. ',
+            `Free for work after busy blocks and sleep: ${hoursPhrase(row.availableHours)}.`
+          )
+        ))
+    ),
+    h('p', { className: 'eyebrow' }, 'Deadlines counted'),
+    h('ul', { className: 'deadline-list' },
+      [
+        ...info.deadlines.map(item =>
+          h('li', {}, `${item.title}, ${hoursPhrase(item.hours)}, due ${dayLabel(item.date)}`)),
+        h('li', {}, `This request: ${proposal.title}, ${hoursPhrase(proposal.likely)}, due ${dayLabel(state.days[proposal.targetDay]?.date)}`)
+      ]
+    ),
+    addForm
+  );
+}
 
-  if (!state.proposals.length || !derived.commitmentCheck) {
-    resultsSection.append(
-      h('div', { className: 'panel empty-proposals' },
-        h('span', { className: 'panel-label' }, 'NO PENDING DRAFTS'),
-        h('h3', {}, 'No draft commitments pending decision'),
-        h('p', { className: 'helper' },
-          'Submit the form above to evaluate a potential commitment side by side against your current week before accepting it.'
-        )
+/** The top link opens My week; this is the evidence under the answer. */
+function renderBooked(args) {
+  return renderBookedDetails(args);
+}
+
+function renderFullNumbers({ analysis, proposal, state, before, after }) {
+  const beforeCost = deadlineCost(before.evaluation.typical, state.days);
+  const withoutLine = analysis.baselineBroken && analysis.beforeClause
+    ? `You're ${analysis.beforeClause.text}.`
+    : beforeCost
+      ? `Everything fits. Your tightest day, ${dayLabel(beforeCost.date)}, has ${hoursPhrase(Math.max(0, beforeCost.marginHours))} to spare.`
+      : 'Nothing is due yet.';
+  const dueLine = analysis.afterCost?.tasks?.length
+    ? `Due by ${dayLabel(analysis.afterCost.date)}: ${analysis.afterCost.tasks.map(task => `${task.title} (${fmtHours(task.hours)})`).join(', ')}.`
+    : '';
+  return h('details', { id: 'full-numbers', className: 'quiet-details' },
+    h('summary', {}, 'Full numbers'),
+    h('div', { className: 'cost-statement-box' },
+      h('p', {}, h('strong', {}, 'Without this request: '), withoutLine),
+      h('p', {}, h('strong', {}, 'With this request: '), analysis.headline),
+      dueLine ? h('p', {}, dueLine) : null,
+      h('p', {}, `Added work: ${hoursPhrase(proposal.likely)} as estimated, between ${fmtHours(proposal.min)} and ${fmtHours(proposal.max)}.`)
+    )
+  );
+}
+
+function renderIncompleteNotes({ state, dispatch }) {
+  if (state.calendarImportedAt || state.days.some(day => (day.busyWindows ?? []).length)) return null;
+  return h('div', { id: 'incomplete-note', className: 'incomplete-note', role: 'note' },
+    h('p', {}, "No timetable has been added, so classes and other fixed blocks aren't counted."),
+    h('button', {
+      type: 'button', id: 'note-add-timetable', className: 'link-button',
+      onClick: () => { openWeekBusy(); dispatch({ type: 'NAVIGATE', screen: 'week' }); }
+    }, 'Add your timetable')
+  );
+}
+
+/** Asks for work hours when the plan has none before the deadline, then re-runs the same check. */
+function renderAvailabilityPrompt({ state, proposal, dispatch }) {
+  const due = state.days[proposal.targetDay]?.date;
+  const picker = renderRangePicker({
+    idPrefix: 'avail',
+    applyLabel: 'Use these hours and check',
+    onApply: (indexes, start, end) => {
+      session.pendingFocus = true;
+      try {
+        saveHoursFor(state, dispatch, indexes, start, end);
+      } catch (failure) {
+        session.pendingFocus = false;
+        throw failure;
+      }
+    }
+  });
+  return h('section', { id: 'availability-prompt', className: 'availability-prompt card', 'aria-labelledby': 'availability-heading' },
+    h('h1', { id: 'availability-heading', className: 'availability-headline', tabindex: '-1' },
+      "When could you work on this before it's due?"),
+    h('p', { className: 'vhero-lead' },
+      `There are no work hours set before ${dayLabel(due)}, so there's nothing to check it against yet. Pick the hours you could use. What you entered stays as it is.`),
+    picker,
+    h('p', { className: 'option-note' }, 'These become your weekly work hours. You can change single days later in Settings.')
+  );
+}
+
+const HOLDING_REPLY = "Got it, thanks! I'm looking at my week and will come back to you tomorrow morning.";
+
+/**
+ * "This can wait till morning": shown only when an engine run confirmed the work still fits if nothing
+ * starts before morning (see verifyWait). Otherwise the normal verdict is shown instead.
+ */
+function renderWait({ wait, proposal, state, ui, rerender, animate }) {
+  const days = namesJoined(wait.dayNames);
+  const hero = h('section', { id: 'check-verdict', className: `vhero vhero-wait${animate ? ' rise' : ''}`, 'aria-labelledby': 'verdict-headline' },
+    h('div', { className: 'eyebrow vhero-eyebrow' }, `${clockText(new Date())} · PAST YOUR WIND-DOWN`),
+    h('h1', { id: 'verdict-headline', className: 'vhero-title vhero-title-wait', tabindex: '-1', role: 'status' }, 'This can wait till morning.'),
+    h('p', { id: 'verdict-lead', className: 'vhero-lead' },
+      `${proposal.title} isn't due until ${wait.dueName}, and ${days} ${wait.dayNames.length > 1 ? 'have' : 'has'} ${wait.spare > 0 ? 'room to spare' : 'just enough room'}. Nothing gets better by doing it now.`));
+  const pct = value => `${Math.round(Math.min(100, (value / Math.max(wait.free, 0.5)) * 100) * 10) / 10}%`;
+  const bar = h('section', {
+    id: 'fit-bar', className: `fitbar${animate ? ' rise' : ''}`, role: 'img',
+    'aria-label': `${days} have ${hoursPhrase(wait.free)} free. ${proposal.title} needs ${hoursPhrase(wait.need)}.`
+  },
+    h('div', { className: 'fitbar-head' }, h('span', {}, days), h('span', {}, `${hoursPhrase(wait.free)} free`)),
+    h('div', { className: 'fitbar-track' }, h('div', { className: `fitbar-ok${animate ? ' grow' : ''}`, style: `width:${pct(wait.need)}` })),
+    h('p', { className: 'fitbar-note' }, `${proposal.title} needs ${hoursPhrase(wait.need)}. It fits, with ${hoursPhrase(wait.spare)} to spare.`));
+  const parts = [hero, bar];
+  if (proposal.audience !== 'self') {
+    if (!ui.waitTouched) ui.waitText = HOLDING_REPLY;
+    const textarea = h('textarea', { id: 'reply-text', className: 'reply-text', rows: '3', spellcheck: 'true' });
+    textarea.value = ui.waitText;
+    const fit = () => { textarea.style.height = 'auto'; textarea.style.height = `${textarea.scrollHeight + 2}px`; };
+    textarea.addEventListener('input', () => { ui.waitText = textarea.value; ui.waitTouched = textarea.value !== HOLDING_REPLY; fit(); });
+    const copy = makeCopyControls(() => textarea.value, 'Copy reply', 'Copied. Now go to sleep.');
+    parts.push(h('section', { id: 'reply-slip', className: 'reply-slip', 'aria-labelledby': 'reply-title' },
+      h('div', { className: 'slip-perforation', 'aria-hidden': 'true' }),
+      h('div', {},
+        h('h2', { id: 'reply-title', className: 'slip-title' }, "Here's what you could send."),
+        h('p', { className: 'slip-hint' }, "A holding reply, so nobody's waiting on you while you sleep.")),
+      h('label', { for: 'reply-text', className: 'sr-only' }, 'Your reply, editable'),
+      textarea, copy.button, copy.status,
+      h('p', { className: 'slip-caption' }, "Copying only copies. Your week doesn't change until you say so.")));
+  }
+  parts.push(h('p', { className: 'fine-print night-note' }, "I only say this when the numbers back it up. If it didn't fit, you'd hear that instead."));
+  parts.push(h('button', { type: 'button', id: 'show-full', className: 'link-button center', onClick: () => { ui.showFull = true; rerender(); } }, 'Show the full answer'));
+  return parts;
+}
+
+/**
+ * Renders the Check screen: the answer, the one verified option, the reply.
+ */
+/** The analysis of the pending request, built exactly as the verdict screen builds it (shared with the cost screen). */
+export function analysisForPending({ state, derived }) {
+  const pending = state.proposals[0] ?? null;
+  const checked = derived.commitmentCheck;
+  if (!pending || !checked) return null;
+  const ui = getUi(pending.id);
+  return analyzeRequest({
+    state, derived, proposal: pending, before: checked.before, after: checked.separate[0],
+    smaller: ui.smaller && ui.smaller.active ? ui.smaller : null
+  });
+}
+
+export function renderCheckScreen(container, ctx) {
+  const { state, derived, dispatch } = ctx;
+  const rerender = () => renderCheckScreen(container, ctx);
+  const pending = state.proposals[0] ?? null;
+  const checked = derived.commitmentCheck;
+  if (!pending) session.editing = false;
+
+  const parts = [];
+  const showResults = Boolean(pending && checked && !session.editing);
+  const animate = session.pendingFocus;
+  setBlobTone('coral');
+
+  if (showResults) {
+    parts.push(
+      h('div', { className: 'result-top' },
+        h('button', {
+          type: 'button', id: 'back-home', className: 'back-link',
+          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'home' })
+        },
+          svg('svg', { width: '18', height: '18', viewBox: '0 0 18 18', fill: 'none', 'aria-hidden': 'true' },
+            svg('path', { d: 'M11 3L5 9l6 6', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })),
+          'Home'),
+        h('button', {
+          type: 'button', id: 'see-booked', className: 'link-button',
+          onClick: () => { openWeekBusy(); dispatch({ type: 'NAVIGATE', screen: 'week' }); }
+        }, "See what's booked")
       )
     );
   } else {
-    const checked = derived.commitmentCheck;
-
-    if (state.proposals.length > 1 && checked.together) {
-      resultsSection.append(
-        renderOutcomeCard({
-          title: `Combined impact: all ${state.proposals.length} pending proposals together`,
-          badgeText: `EVALUATED TOGETHER · ${state.proposals.length} PROPOSALS`,
-          beforeOutcome: checked.before,
-          afterOutcome: checked.together,
-          proposals: state.proposals,
-          state,
-          dispatch
-        })
-      );
-    }
-
-    checked.separate.forEach((outcome, index) => {
-      const proposal = state.proposals[index];
-      if (!proposal) return;
-      const badgeText = state.proposals.length > 1
-        ? `EVALUATED SEPARATELY · PROPOSAL ${index + 1} OF ${state.proposals.length}`
-        : 'BEFORE & AFTER COMPARISON · DRAFT PROPOSAL';
-      resultsSection.append(
-        renderOutcomeCard({
-          title: `Proposal: ${proposal.title}`,
-          badgeText,
-          beforeOutcome: checked.before,
-          afterOutcome: outcome,
-          proposals: [proposal],
-          state,
-          dispatch
-        })
-      );
-    });
+    parts.push(
+      h('header', { className: 'screen-intro' },
+        h('h1', { className: 'screen-title' }, 'Before you say yes.'),
+        h('p', { className: 'screen-lede' },
+          "Tell me what's on the table. I'll check it against your actual week.")
+      )
+    );
   }
 
-  container.replaceChildren(
-    headerBar,
-    ...(unresolvedBanner ? [unresolvedBanner] : []),
-    formPanel,
-    resultsSection
-  );
+  if (state.unresolvedConflict && !derived.evaluation.typical.feasible) {
+    parts.push(
+      h('div', { className: 'banner banner-warn', role: 'status' },
+        h('div', { className: 'banner-body' },
+          h('strong', {}, 'Your week already has a gap. '),
+          'You added something earlier even though it did not fit. This check keeps that in mind.'
+        ),
+        h('button', {
+          type: 'button', className: 'link-button',
+          onClick: () => dispatch({ type: 'NAVIGATE', screen: 'rescue' })
+        }, 'See what can move')
+      )
+    );
+  }
+
+  let analysis = null;
+  let availabilityShown = false;
+  let waitShown = false;
+  if (pending && checked && !session.editing) {
+    const before = checked.before;
+    const after = checked.separate[0];
+    const ui = getUi(pending.id);
+    analysis = analyzeRequest({
+      state, derived, proposal: pending, before, after,
+      smaller: ui.smaller && ui.smaller.active ? ui.smaller : null
+    });
+
+    parts.push(renderRequestSummary({ proposal: pending, state, rerender }));
+    if (!hasWorkWindows(state.days.slice(0, pending.hardDay + 1))) {
+      // Never a verdict without availability.
+      analysis = null;
+      parts.push(renderAvailabilityPrompt({ state, proposal: pending, dispatch }));
+      parts.push(h('div', { className: 'section-actions' },
+        h('button', {
+          type: 'button', className: 'link-button',
+          onClick: () => { resetRequestUi(); dispatch({ type: 'DISCARD_PROPOSAL', proposalIds: [pending.id] }); }
+        }, 'Not now')));
+      availabilityShown = true;
+    } else {
+      setBlobTone(analysis.kind === 'short' ? 'coral' : 'sage');
+      const layout = [];
+      const wait = analysis.fits && !ui.showFull ? verifyWait({ state, derived, proposal: pending, now: new Date() }) : null;
+      if (wait) {
+        waitShown = true;
+        parts.push(...renderWait({ wait, proposal: pending, state, ui, rerender, animate }));
+        parts.push(renderDecisions({ analysis, proposal: pending, after, dispatch }));
+      } else {
+      layout.push(renderVerdict({ analysis, state, animate }));
+      const bar = renderBar({ analysis, animate });
+      if (bar) layout.push(bar);
+      const learned = renderLearnedLine({ proposal: pending, derived, state, dispatch });
+      if (learned) layout.push(learned);
+      const option = renderOption({ analysis, state, dispatch, animate });
+      if (option) layout.push(option);
+      layout.push(renderAudienceToggle({ proposal: pending, state, dispatch }));
+      const forOthers = pending.audience !== 'self';
+      if (forOthers) layout.push(renderReplySlip({ analysis, proposal: pending, state, ui, rerender }));
+      layout.push(renderDecisions({ analysis, proposal: pending, after, dispatch }));
+      const incomplete = renderIncompleteNotes({ state, dispatch });
+      if (incomplete) layout.push(incomplete);
+      const range = renderEstimateRange(analysis, after, state);
+      if (range) layout.push(range);
+      const smallerOffer = forOthers ? renderSmallerOffer({ analysis, proposal: pending, state, ui, dispatch, rerender }) : null;
+      if (smallerOffer) layout.push(smallerOffer);
+      layout.push(renderBooked({ analysis, proposal: pending, state, derived, after, dispatch }));
+      layout.push(renderFullNumbers({ analysis, proposal: pending, state, before, after }));
+      parts.push(h('div', { className: 'check-layout' }, layout));
+      }
+    }
+
+    if (state.proposals.length > 1) {
+      parts.push(
+        h('section', { className: 'extra-pending', id: 'extra-pending' },
+          h('p', { className: 'eyebrow' }, 'Also waiting on a decision'),
+          h('ul', {},
+            state.proposals.slice(1).map(item =>
+              h('li', {},
+                `${item.title} (${hoursPhrase(item.likely)}) `,
+                h('button', {
+                  type: 'button', className: 'link-button',
+                  onClick: () => dispatch({ type: 'DISCARD_PROPOSAL', proposalIds: [item.id] })
+                }, 'Not now')
+              ))
+          )
+        )
+      );
+    }
+  } else {
+    parts.push(renderRequestForm({ state, derived, dispatch, pending, rerender, title: pending ? 'Change what you are checking' : "What's on the table?" }));
+  }
+
+  container.replaceChildren(...parts);
+  // Size the reply box to its text so nothing is clipped.
+  for (const area of container.querySelectorAll('.reply-text')) {
+    area.style.height = 'auto';
+    area.style.height = `${area.scrollHeight + 2}px`;
+  }
+
+  if (analysis) {
+    if (session.pendingFocus) {
+      session.pendingFocus = false;
+      announce(waitShown ? 'This can wait till morning.' : `${analysis.bigWord} ${analysis.lead}`);
+      const heading = document.getElementById('verdict-headline');
+      heading?.focus({ preventScroll: false });
+      heading?.scrollIntoView?.({ block: 'start' });
+    }
+  } else if (availabilityShown && session.pendingFocus) {
+    session.pendingFocus = false;
+    document.getElementById('availability-heading')?.focus();
+  } else if (session.pendingFocus) {
+    session.pendingFocus = false;
+  }
+  if (session.focusSelectorAfterRender) {
+    const target = container.querySelector(session.focusSelectorAfterRender);
+    session.focusSelectorAfterRender = null;
+    target?.focus();
+  }
 }
